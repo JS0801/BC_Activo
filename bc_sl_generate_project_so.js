@@ -15,7 +15,7 @@
  * - Create Project Tasks from CPQ staging records.
  * - Create related Sales Order records from CPQ component data.
  */
-define(['N/record', 'N/search'], function (record, search) {
+define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
 
   // ---- Estimate field IDs --------------------------------------------------
   var EST = {
@@ -46,7 +46,7 @@ define(['N/record', 'N/search'], function (record, search) {
   // ---- Project field IDs ---------------------------------------------------
   var PROJ = {
     NAME: 'companyname',
-    PARENT: 'parent',
+    CUSTOMER_PARENT: 'parent', // UI label is Customer; field ID on Job/Project is parent.
     SUBSIDIARY: 'subsidiary',
     STARTDATE: 'startdate',
     PROJECTED_END: 'projectedenddate',
@@ -58,7 +58,8 @@ define(['N/record', 'N/search'], function (record, search) {
     FS_PROJECT_TYPE: 'custentity_nx_project_type',
     SITE_ASSET: 'custentity_nx_asset',
     FS_CUSTOMER: 'custentity_nx_customer',
-    SOURCE_ESTIMATE: 'custentity_bc_source_estimate'
+    SOURCE_ESTIMATE: 'custentity_bc_source_estimate',
+    SEARCH_CUSTOMER: 'customer'
   };
 
   var APPROVED_STATUS_VALUE = '2';
@@ -104,7 +105,11 @@ define(['N/record', 'N/search'], function (record, search) {
       out.error = e.message || String(e);
     }
 
-    ctx.response.write({ output: JSON.stringify(out) });
+    if (ctx.request.parameters.format === 'json') {
+      ctx.response.write({ output: JSON.stringify(out) });
+    } else {
+      ctx.response.write({ output: buildGenerationResultPage(out) });
+    }
   }
 
   function writeProjectProgressPage(ctx, estId) {
@@ -166,14 +171,14 @@ define(['N/record', 'N/search'], function (record, search) {
       columns: [
         search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
         search.createColumn({ name: 'entityid' }),
-        search.createColumn({ name: 'parent' }),
+        search.createColumn({ name: PROJ.SEARCH_CUSTOMER }),
         search.createColumn({ name: PROJ.SITE_ASSET })
       ]
     }).run().each(function (result) {
       projects.push({
         id: result.getValue({ name: 'internalid' }),
         name: result.getValue({ name: 'entityid' }),
-        parent: result.getText({ name: 'parent' }) || result.getValue({ name: 'parent' }),
+        parent: result.getText({ name: PROJ.SEARCH_CUSTOMER }) || result.getValue({ name: PROJ.SEARCH_CUSTOMER }),
         site: result.getText({ name: PROJ.SITE_ASSET }) || result.getValue({ name: PROJ.SITE_ASSET })
       });
       return true;
@@ -234,7 +239,7 @@ define(['N/record', 'N/search'], function (record, search) {
     if (!expected) return { code: 'WAITING', text: 'Waiting' };
     if (created >= expected) return { code: 'COMPLETE', text: 'Complete' };
     if (generated && created < expected) return { code: 'WARNING', text: 'Warning' };
-    if (created > 0) return { code: 'PROCESSING', text: 'Processing' };
+    if (created > 0) return { code: 'PROCESSING', text: 'Processing / Partial' };
     return { code: 'NOT_STARTED', text: 'Not Started' };
   }
 
@@ -272,18 +277,34 @@ define(['N/record', 'N/search'], function (record, search) {
   function runStandardProjectCreation(est, estId) {
     var targetCount = PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
     var projectIds = [];
+    var errors = [];
 
     for (var i = 0; i < targetCount; i++) {
-      projectIds.push(createProject({
+      var attempt = {
         estimate: est,
         estimateId: estId,
         parentId: est.getValue(EST.ENTITY),
         siteAssetId: est.getValue(EST.SITE_ASSET),
-        namePrefix: targetCount > 1 ? 'Progress Test Project ' + padNumber(i + 1) : 'Project'
-      }));
+        namePrefix: targetCount > 1 ? 'Progress Test Project ' + padNumber(i + 1) : 'Project',
+        attemptLabel: targetCount > 1 ? 'Standard Project ' + padNumber(i + 1) : 'Standard Project'
+      };
+
+      var result = tryCreateProject(attempt);
+      if (result.projectId) projectIds.push(result.projectId);
+      if (result.error) errors.push(result.error);
     }
 
     var projectId = projectIds[0];
+
+    if (errors.length) {
+      return buildPartialFailureResult({
+        flowType: 'STANDARD',
+        expectedProjectCount: targetCount,
+        projectIds: projectIds,
+        errors: errors,
+        note: 'Standard Project generation completed with errors. Review the failed attempts, fix the data, and re-run as needed.'
+      });
+    }
 
     markEstimateGenerated(estId, projectId);
 
@@ -306,23 +327,59 @@ define(['N/record', 'N/search'], function (record, search) {
       throw new Error('Rollout Estimate has no unique line-level Site Assets in ' + EST_LINE.SITE_ASSET + '.');
     }
 
-    var parentProjectId = createProject({
+    var errors = [];
+    var parentProjectId;
+    var parentResult = tryCreateProject({
       estimate: est,
       estimateId: estId,
       parentId: est.getValue(EST.ENTITY),
       siteAssetId: null,
-      namePrefix: 'Rollout Parent'
+      namePrefix: 'Rollout Parent',
+      attemptLabel: 'Rollout Parent Project'
     });
 
+    if (parentResult.projectId) parentProjectId = parentResult.projectId;
+    if (parentResult.error) errors.push(parentResult.error);
+
     var childProjectIds = [];
-    for (var i = 0; i < sites.length; i++) {
-      childProjectIds.push(createProject({
-        estimate: est,
-        estimateId: estId,
-        parentId: parentProjectId,
-        siteAssetId: sites[i].id,
-        namePrefix: 'Rollout Site ' + (sites[i].text || sites[i].id)
-      }));
+    if (parentProjectId) {
+      for (var i = 0; i < sites.length; i++) {
+        var childResult = tryCreateProject({
+          estimate: est,
+          estimateId: estId,
+          parentId: parentProjectId,
+          siteAssetId: sites[i].id,
+          siteText: sites[i].text,
+          namePrefix: 'Rollout Site ' + (sites[i].text || sites[i].id),
+          attemptLabel: 'Rollout Child Project for Site ' + (sites[i].text || sites[i].id)
+        });
+
+        if (childResult.projectId) childProjectIds.push(childResult.projectId);
+        if (childResult.error) errors.push(childResult.error);
+      }
+    } else {
+      for (var s = 0; s < sites.length; s++) {
+        errors.push({
+          label: 'Rollout Child Project for Site ' + (sites[s].text || sites[s].id),
+          siteId: sites[s].id,
+          siteText: sites[s].text,
+          message: 'Skipped because the parent Project was not created.'
+        });
+      }
+    }
+
+    if (errors.length) {
+      var allProjectIds = parentProjectId ? [parentProjectId].concat(childProjectIds) : childProjectIds;
+      return buildPartialFailureResult({
+        flowType: 'ROLLOUT',
+        parentProjectId: parentProjectId,
+        childProjectIds: childProjectIds,
+        projectIds: allProjectIds,
+        expectedProjectCount: sites.length + 1,
+        siteCount: sites.length,
+        errors: errors,
+        note: 'Rollout Project generation completed with errors. Successful Projects were left in place for review.'
+      });
     }
 
     markEstimateGenerated(estId, parentProjectId);
@@ -342,7 +399,7 @@ define(['N/record', 'N/search'], function (record, search) {
     var est = opts.estimate;
     var project = record.create({ type: record.Type.JOB, isDynamic: true });
 
-    project.setValue({ fieldId: PROJ.PARENT, value: opts.parentId });
+    project.setValue({ fieldId: PROJ.CUSTOMER_PARENT, value: opts.parentId });
     project.setValue({ fieldId: PROJ.SUBSIDIARY, value: est.getValue(EST.SUBSIDIARY) });
     project.setValue({ fieldId: PROJ.STARTDATE, value: est.getValue(EST.PROJECT_START) || est.getValue(EST.TRANDATE) });
     project.setValue({ fieldId: PROJ.PROJECTED_END, value: est.getValue(EST.PROJECT_END) });
@@ -362,7 +419,99 @@ define(['N/record', 'N/search'], function (record, search) {
       value: est.getValue(EST.FSM_CUSTOMER) || est.getValue(EST.ENTITY)
     });
 
-    return project.save({ enableSourcing: true, ignoreMandatoryFields: false });
+    return project.save({ enableSourcing: true, ignoreMandatoryFields: true });
+  }
+
+  function tryCreateProject(opts) {
+    try {
+      return {
+        projectId: createProject(opts),
+        error: null
+      };
+    } catch (e) {
+      var error = {
+        label: opts.attemptLabel || opts.namePrefix || 'Project',
+        siteId: opts.siteAssetId || '',
+        siteText: opts.siteText || '',
+        message: e.message || String(e)
+      };
+
+      log.error({
+        title: 'BC Project generation failed: ' + error.label,
+        details: JSON.stringify(error)
+      });
+
+      return {
+        projectId: null,
+        error: error
+      };
+    }
+  }
+
+  function buildPartialFailureResult(opts) {
+    var createdCount = opts.projectIds ? opts.projectIds.length : 0;
+    var expectedCount = opts.expectedProjectCount || createdCount;
+
+    return {
+      success: false,
+      partial: createdCount > 0,
+      flowType: opts.flowType,
+      parentProjectId: opts.parentProjectId,
+      childProjectIds: opts.childProjectIds || [],
+      projectIds: opts.projectIds || [],
+      projectCount: createdCount,
+      expectedProjectCount: expectedCount,
+      failedProjectCount: opts.errors.length,
+      siteCount: opts.siteCount,
+      errors: opts.errors,
+      note: opts.note,
+      error: 'Project generation completed with errors. Created ' + createdCount + ' of ' + expectedCount + ' expected Projects.'
+    };
+  }
+
+  function buildGenerationResultPage(result) {
+    var success = result.success === true;
+    var partial = result.partial === true;
+    var statusText = success ? 'Complete' : partial ? 'Completed with Errors' : 'Failed';
+    var barColor = success ? '#059669' : partial ? '#d97706' : '#dc2626';
+    var expected = result.expectedProjectCount || result.projectCount || 0;
+    var created = result.projectCount || 0;
+    var percent = expected ? Math.min(100, Math.round((created / expected) * 100)) : (success ? 100 : 0);
+    var errorRows = result.errors && result.errors.length ? result.errors.map(function (err) {
+      return '<tr>' +
+        '<td>' + escapeHtml(err.label || '') + '</td>' +
+        '<td>' + escapeHtml(err.siteText || err.siteId || '') + '</td>' +
+        '<td>' + escapeHtml(err.message || '') + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="3">No project-level errors were returned.</td></tr>';
+
+    return '<!doctype html><html><head><title>Project Generation Status</title>' +
+      '<style>' +
+      'body{font-family:Arial,sans-serif;margin:24px;color:#1f2937;background:#f8fafc;}' +
+      '.wrap{max-width:980px;margin:0 auto;background:#fff;border:1px solid #d9e2ec;padding:20px;}' +
+      '.bar{height:18px;background:#e5e7eb;border-radius:9px;overflow:hidden;margin:14px 0;}' +
+      '.fill{height:18px;background:' + barColor + ';width:' + percent + '%;}' +
+      '.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0;}' +
+      '.box{border:1px solid #e5e7eb;background:#f9fafb;padding:12px;}' +
+      '.label{font-size:12px;color:#6b7280;text-transform:uppercase;}' +
+      '.value{font-size:20px;font-weight:700;margin-top:4px;}' +
+      'table{width:100%;border-collapse:collapse;margin-top:16px;}' +
+      'th,td{border:1px solid #e5e7eb;padding:8px;text-align:left;vertical-align:top;}' +
+      'th{background:#f3f4f6;}' +
+      '</style></head><body><div class="wrap">' +
+      '<h2>Project Generation Status</h2>' +
+      '<div>Status: <strong>' + escapeHtml(statusText) + '</strong></div>' +
+      '<div class="bar"><div class="fill"></div></div>' +
+      '<div>' + escapeHtml(result.note || result.error || '') + '</div>' +
+      '<div class="summary">' +
+        '<div class="box"><div class="label">Flow</div><div class="value">' + escapeHtml(result.flowType || '') + '</div></div>' +
+        '<div class="box"><div class="label">Expected</div><div class="value">' + expected + '</div></div>' +
+        '<div class="box"><div class="label">Created</div><div class="value">' + created + '</div></div>' +
+        '<div class="box"><div class="label">Failed</div><div class="value">' + (result.failedProjectCount || 0) + '</div></div>' +
+      '</div>' +
+      '<h3>Project Errors</h3>' +
+      '<table><thead><tr><th>Attempt</th><th>Site</th><th>Error</th></tr></thead><tbody>' + errorRows + '</tbody></table>' +
+      '</div></body></html>';
   }
 
   function markEstimateGenerated(estId, projectId) {
