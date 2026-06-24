@@ -345,7 +345,7 @@ define(['N/record', 'N/search'], function (record, search) {
       value: est.getValue(EST.FSM_CUSTOMER) || est.getValue(EST.ENTITY)
     });
 
-    return project.save({ enableSourcing: true, ignoreMandatoryFields: false });
+    return project.save({ enableSourcing: true, ignoreMandatoryFields: true });
   }
 
   function markEstimateGenerated(estId, projectId) {
