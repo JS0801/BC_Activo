@@ -66,6 +66,10 @@ define(['N/record', 'N/search'], function (record, search) {
   var ESTIMATE_TYPE_ROLLOUT = '2';
   var FIXED_FEE_PROJECT_TYPE = '18';
 
+  // SANDBOX TEST ONLY: set to false before moving beyond progress-bar testing.
+  var PROGRESS_TEST_MODE = true;
+  var PROGRESS_TEST_STANDARD_PROJECT_COUNT = 10;
+
   function onRequest(ctx) {
     var out = { success: false };
 
@@ -141,7 +145,9 @@ define(['N/record', 'N/search'], function (record, search) {
   function getExpectedProjectCount(est) {
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
 
-    if (estimateType === ESTIMATE_TYPE_STANDARD) return 1;
+    if (estimateType === ESTIMATE_TYPE_STANDARD) {
+      return PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
+    }
 
     if (estimateType === ESTIMATE_TYPE_ROLLOUT) {
       var siteCount = getUniqueLineSites(est).length;
@@ -178,7 +184,7 @@ define(['N/record', 'N/search'], function (record, search) {
 
   function buildProjectProgressPage(progress) {
     var complete = progress.statusCode === 'COMPLETE';
-    var refresh = complete ? '' : '<meta http-equiv="refresh" content="5">';
+    var refresh = complete ? '' : '<meta http-equiv="refresh" content="2">';
     var warning = progress.statusCode === 'WARNING' ?
       '<div class="warn">The Estimate is marked generated, but the Project count does not match the expected count. Review the generated Projects before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
@@ -254,7 +260,7 @@ define(['N/record', 'N/search'], function (record, search) {
       throw new Error('Project already generated for this estimate.');
     }
 
-    if (hasExistingGeneratedProjects(estId)) {
+    if (!PROGRESS_TEST_MODE && hasExistingGeneratedProjects(estId)) {
       throw new Error('Project records already exist for this estimate. Delete or review them before re-running.');
     }
 
@@ -264,13 +270,20 @@ define(['N/record', 'N/search'], function (record, search) {
   }
 
   function runStandardProjectCreation(est, estId) {
-    var projectId = createProject({
-      estimate: est,
-      estimateId: estId,
-      parentId: est.getValue(EST.ENTITY),
-      siteAssetId: est.getValue(EST.SITE_ASSET),
-      namePrefix: 'Project'
-    });
+    var targetCount = PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
+    var projectIds = [];
+
+    for (var i = 0; i < targetCount; i++) {
+      projectIds.push(createProject({
+        estimate: est,
+        estimateId: estId,
+        parentId: est.getValue(EST.ENTITY),
+        siteAssetId: est.getValue(EST.SITE_ASSET),
+        namePrefix: targetCount > 1 ? 'Progress Test Project ' + padNumber(i + 1) : 'Project'
+      }));
+    }
+
+    var projectId = projectIds[0];
 
     markEstimateGenerated(estId, projectId);
 
@@ -278,8 +291,12 @@ define(['N/record', 'N/search'], function (record, search) {
       success: true,
       flowType: 'STANDARD',
       projectId: projectId,
-      projectCount: 1,
-      note: 'Standard project created. Project Tasks and Sales Order are pending a later phase.'
+      projectIds: projectIds,
+      projectCount: projectIds.length,
+      testMode: PROGRESS_TEST_MODE,
+      note: PROGRESS_TEST_MODE ?
+        'Progress test mode created ' + projectIds.length + ' Standard Projects. Turn off test mode after validation.' :
+        'Standard project created. Project Tasks and Sales Order are pending a later phase.'
     };
   }
 
@@ -345,7 +362,7 @@ define(['N/record', 'N/search'], function (record, search) {
       value: est.getValue(EST.FSM_CUSTOMER) || est.getValue(EST.ENTITY)
     });
 
-    return project.save({ enableSourcing: true, ignoreMandatoryFields: true });
+    return project.save({ enableSourcing: true, ignoreMandatoryFields: false });
   }
 
   function markEstimateGenerated(estId, projectId) {
@@ -398,6 +415,10 @@ define(['N/record', 'N/search'], function (record, search) {
 
   function makeProjectName(prefix, tranId) {
     return prefix + ' - Estimate ' + (tranId || '');
+  }
+
+  function padNumber(value) {
+    return value < 10 ? '0' + value : String(value);
   }
 
   function setIfPresent(rec, fieldId, value) {
