@@ -65,7 +65,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   var TASK_ASSIGNEE = {
     SUBLIST: 'assignee',
     RESOURCE: 'resource',
-    ESTIMATED_WORK: 'estimatedwork'
+    PLANNED_WORK: 'plannedwork',
+    UNIT_COST: 'unitcost'
   };
 
   // ---- Project field IDs ---------------------------------------------------
@@ -752,8 +753,13 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
     setCurrentTaskAssigneeField(
       task,
-      TASK_ASSIGNEE.ESTIMATED_WORK,
+      TASK_ASSIGNEE.PLANNED_WORK,
       taskData.estimatedwork || taskData.plannedwork || taskData.duration
+    );
+    setCurrentTaskAssigneeField(
+      task,
+      TASK_ASSIGNEE.UNIT_COST,
+      taskData.unitcost || taskData.cost || taskData.resourcecost || 0
     );
 
     task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
