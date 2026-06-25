@@ -62,6 +62,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     ASSET: 'custevent_nx_task_asset'
   };
 
+  var TASK_ASSIGNEE = {
+    SUBLIST: 'assignee',
+    RESOURCE: 'resource',
+    ESTIMATED_WORK: 'estimatedwork'
+  };
+
   // ---- Project field IDs ---------------------------------------------------
   var PROJ = {
     NAME: 'companyname',
@@ -243,7 +249,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
         search.createColumn({ name: TASK.TITLE }),
         search.createColumn({ name: TASK.PROJECT }),
-        search.createColumn({ name: 'status' })
+        search.createColumn({ name: 'status' }),
+        search.createColumn({ name: 'estimatedwork' })
       ]
     }).run().each(function (result) {
       tasks.push({
@@ -251,7 +258,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         title: result.getValue({ name: TASK.TITLE }),
         projectId: result.getValue({ name: TASK.PROJECT }),
         project: result.getText({ name: TASK.PROJECT }) || result.getValue({ name: TASK.PROJECT }),
-        status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' })
+        status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' }),
+        estimatedwork: result.getValue({ name: 'estimatedwork' })
       });
       return true;
     });
@@ -361,6 +369,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<td>' + escapeHtml(task.id) + '</td>' +
         '<td>' + escapeHtml(task.title) + '</td>' +
         '<td>' + escapeHtml(task.status) + '</td>' +
+        '<td>' + escapeHtml(task.estimatedwork) + '</td>' +
       '</tr>';
     }).join('');
 
@@ -698,7 +707,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var taskData = opts.taskData || {};
     var task = record.create({
       type: record.Type.PROJECT_TASK,
-      isDynamic: false
+      isDynamic: true
     });
 
     task.setValue({ fieldId: TASK.PROJECT, value: opts.projectId });
@@ -706,6 +715,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
     setTaskField(task, TASK.TITLE, taskData.title);
     setTaskField(task, 'status', taskData.status);
+    setTaskField(task, 'estimatedwork', taskData.estimatedwork);
     setTaskField(task, 'constrainttype', taskData.constrainttype);
     setTaskField(task, 'duration', taskData.duration);
     setTaskField(task, 'plannedwork', taskData.plannedwork);
@@ -719,7 +729,53 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET)
     );
 
+    addProjectTaskAssignee(task, opts, taskData);
+
     return task.save({ enableSourcing: true, ignoreMandatoryFields: true });
+  }
+
+  function addProjectTaskAssignee(task, opts, taskData) {
+    var resourceId = getProjectTaskResource(opts, taskData);
+
+    if (!resourceId) {
+      throw new Error(
+        'No Project Task resource found. Populate Estimate Project Manager or pass resource in the CPQ task JSON.'
+      );
+    }
+
+    task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+    task.setCurrentSublistValue({
+      sublistId: TASK_ASSIGNEE.SUBLIST,
+      fieldId: TASK_ASSIGNEE.RESOURCE,
+      value: resourceId
+    });
+
+    setCurrentTaskAssigneeField(
+      task,
+      TASK_ASSIGNEE.ESTIMATED_WORK,
+      taskData.estimatedwork || taskData.plannedwork || taskData.duration
+    );
+
+    task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+  }
+
+  function getProjectTaskResource(opts, taskData) {
+    return (
+      taskData.resource ||
+      taskData.assignee ||
+      taskData.projectresource ||
+      opts.estimate.getValue(EST.PROJECTMANAGER)
+    );
+  }
+
+  function setCurrentTaskAssigneeField(task, fieldId, value) {
+    if (value === '' || value === null || value === undefined) return;
+
+    task.setCurrentSublistValue({
+      sublistId: TASK_ASSIGNEE.SUBLIST,
+      fieldId: fieldId,
+      value: value
+    });
   }
 
   function setTaskField(task, fieldId, value) {
