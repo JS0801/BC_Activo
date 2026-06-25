@@ -243,8 +243,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
         search.createColumn({ name: TASK.TITLE }),
         search.createColumn({ name: TASK.PROJECT }),
-        search.createColumn({ name: 'status' }),
-        search.createColumn({ name: 'estimatedwork' })
+        search.createColumn({ name: 'status' })
       ]
     }).run().each(function (result) {
       tasks.push({
@@ -252,8 +251,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         title: result.getValue({ name: TASK.TITLE }),
         projectId: result.getValue({ name: TASK.PROJECT }),
         project: result.getText({ name: TASK.PROJECT }) || result.getValue({ name: TASK.PROJECT }),
-        status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' }),
-        estimatedwork: result.getValue({ name: 'estimatedwork' })
+        status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' })
       });
       return true;
     });
@@ -363,7 +361,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<td>' + escapeHtml(task.id) + '</td>' +
         '<td>' + escapeHtml(task.title) + '</td>' +
         '<td>' + escapeHtml(task.status) + '</td>' +
-        '<td>' + escapeHtml(task.estimatedwork) + '</td>' +
       '</tr>';
     }).join('');
 
@@ -709,7 +706,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
     setTaskField(task, TASK.TITLE, taskData.title);
     setTaskField(task, 'status', taskData.status);
-    setTaskField(task, 'estimatedwork', taskData.estimatedwork);
     setTaskField(task, 'constrainttype', taskData.constrainttype);
     setTaskField(task, 'duration', taskData.duration);
     setTaskField(task, 'plannedwork', taskData.plannedwork);
