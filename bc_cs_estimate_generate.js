@@ -15,6 +15,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   var SUITELET_DEPLOYMENT_ID = 'customdeploy_bc_sl_generate_proj_so';
   var ESTIMATE_TYPE_FIELD = 'custbody_bc_estimate_type';
   var ESTIMATE_TYPE_ROLLOUT = '2';
+  var projectProgressRefreshTimer = null;
 
   function pageInit() {
     exposeClientFunctions();
@@ -48,17 +49,56 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
         percent: 55
       });
 
-      var resp = https.get({ url: suiteletUrl });
-      var result = JSON.parse(resp.body);
+      sendAsyncGet(suiteletUrl, function (body) {
+        var result;
 
-      if (result.success) {
-        showGenerationComplete(result);
-      } else {
-        showGenerationError(result.error || 'Unknown error');
-      }
+        try {
+          result = JSON.parse(body);
+        } catch (parseError) {
+          showGenerationError('Generation service returned an unexpected response.');
+          return;
+        }
+
+        if (result.success) {
+          showGenerationComplete(result);
+        } else {
+          showGenerationError(result.error || 'Unknown error');
+        }
+      }, function (message) {
+        showGenerationError(message);
+      });
     } catch (e) {
       showGenerationError('Could not reach the generation service: ' + e.message);
     }
+  }
+
+  function sendAsyncGet(requestUrl, onSuccess, onError) {
+    if (typeof XMLHttpRequest === 'undefined') {
+      try {
+        var resp = https.get({ url: requestUrl });
+        onSuccess(resp.body);
+      } catch (e) {
+        onError('Could not reach the generation service: ' + e.message);
+      }
+      return;
+    }
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', requestUrl, true);
+    xhr.withCredentials = true;
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onSuccess(xhr.responseText);
+      } else {
+        onError('Could not reach the generation service. HTTP status: ' + xhr.status);
+      }
+    };
+    xhr.onerror = function () {
+      onError('Could not reach the generation service.');
+    };
+    xhr.send();
   }
 
   function bcViewProjectProgress() {
@@ -137,8 +177,8 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       '<button type="button" id="bc_generation_close" class="bc-progress-secondary">Close</button>';
     var refreshButton = opts.state === 'complete' ?
       '<button type="button" id="bc_generation_refresh" class="bc-progress-primary">Refresh Estimate</button>' : '';
-    var progressButton = opts.state !== 'running' ?
-      '<button type="button" id="bc_generation_progress" class="bc-progress-secondary">Show Progress</button>' : '';
+    var progressButton =
+      '<button type="button" id="bc_generation_progress" class="bc-progress-secondary">Show Progress</button>';
 
     overlay.innerHTML =
       '<div class="bc-progress-card" role="dialog" aria-modal="true">' +
@@ -180,7 +220,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
 
   function showProjectProgressPopup(progressUrl) {
     ensureProgressStyles();
-    removeElement('bc_project_progress_overlay');
+    closeProjectProgressPopup();
 
     var overlay = document.createElement('div');
     overlay.id = 'bc_project_progress_overlay';
@@ -194,7 +234,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
           '</div>' +
           '<button type="button" id="bc_project_progress_close_x" class="bc-progress-icon-btn" aria-label="Close">x</button>' +
         '</div>' +
-        '<iframe id="bc_project_progress_frame" class="bc-progress-frame" src="' + escapeAttribute(progressUrl) + '"></iframe>' +
+        '<iframe id="bc_project_progress_frame" class="bc-progress-frame" src="' + escapeAttribute(withCacheBuster(progressUrl)) + '"></iframe>' +
         '<div class="bc-progress-actions">' +
           '<button type="button" id="bc_project_progress_refresh" class="bc-progress-secondary">Refresh Progress</button>' +
           '<button type="button" id="bc_project_progress_close" class="bc-progress-primary">Close</button>' +
@@ -203,15 +243,34 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
 
     document.body.appendChild(overlay);
 
-    document.getElementById('bc_project_progress_close').onclick = function () {
-      removeElement('bc_project_progress_overlay');
-    };
-    document.getElementById('bc_project_progress_close_x').onclick = function () {
-      removeElement('bc_project_progress_overlay');
-    };
+    document.getElementById('bc_project_progress_close').onclick = closeProjectProgressPopup;
+    document.getElementById('bc_project_progress_close_x').onclick = closeProjectProgressPopup;
     document.getElementById('bc_project_progress_refresh').onclick = function () {
-      document.getElementById('bc_project_progress_frame').src = progressUrl;
+      refreshProjectProgressFrame(progressUrl);
     };
+
+    projectProgressRefreshTimer = window.setInterval(function () {
+      refreshProjectProgressFrame(progressUrl);
+    }, 2500);
+  }
+
+  function refreshProjectProgressFrame(progressUrl) {
+    var frame = document.getElementById('bc_project_progress_frame');
+    if (frame) frame.src = withCacheBuster(progressUrl);
+  }
+
+  function withCacheBuster(rawUrl) {
+    var joiner = String(rawUrl).indexOf('?') === -1 ? '?' : '&';
+    return rawUrl + joiner + '_bc_ts=' + new Date().getTime();
+  }
+
+  function closeProjectProgressPopup() {
+    if (projectProgressRefreshTimer) {
+      window.clearInterval(projectProgressRefreshTimer);
+      projectProgressRefreshTimer = null;
+    }
+
+    removeElement('bc_project_progress_overlay');
   }
 
   function ensureProgressStyles() {
