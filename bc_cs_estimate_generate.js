@@ -30,7 +30,10 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var suiteletUrl = url.resolveScript({
       scriptId: SUITELET_SCRIPT_ID,
       deploymentId: SUITELET_DEPLOYMENT_ID,
-      params: { estid: estId }
+      params: {
+        estid: estId,
+        format: 'json'
+      }
     });
 
     showGenerationRunning(estimateType);
@@ -59,8 +62,12 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
           return;
         }
 
+        saveLastGenerationResult(result);
+
         if (result.success) {
           showGenerationComplete(result);
+        } else if (result.partial || result.errors) {
+          showGenerationPartial(result);
         } else {
           showGenerationError(result.error || 'Unknown error');
         }
@@ -134,6 +141,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var details = [];
 
     if (result.note) details.push(result.note);
+    if (result.expectedProjectCount) details.push('Expected Projects: ' + result.expectedProjectCount);
     if (result.projectCount) details.push('Projects created: ' + result.projectCount);
     if (result.projectId) details.push('Project ID: ' + result.projectId);
     if (result.parentProjectId) details.push('Parent Project ID: ' + result.parentProjectId);
@@ -143,6 +151,21 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       title: 'Generation Complete',
       message: 'Project progress has been updated for this Estimate.',
       percent: 100,
+      details: details
+    });
+  }
+
+  function showGenerationPartial(result) {
+    var details = buildGenerationDetails(result);
+    var expected = Number(result.expectedProjectCount || result.projectCount || 0);
+    var created = Number(result.projectCount || 0);
+    var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 100;
+
+    updateGenerationModal({
+      state: 'warning',
+      title: 'Generation Completed with Errors',
+      message: result.error || 'Some Project records could not be created. Review the failed attempts before re-running.',
+      percent: percent,
       details: details
     });
   }
@@ -157,6 +180,39 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     });
   }
 
+  function buildGenerationDetails(result) {
+    var details = [];
+
+    if (result.note) details.push(result.note);
+    if (result.expectedProjectCount !== undefined) details.push('Expected Projects: ' + result.expectedProjectCount);
+    if (result.projectCount !== undefined) details.push('Projects created: ' + result.projectCount);
+    if (result.failedProjectCount !== undefined) details.push('Project attempts failed: ' + result.failedProjectCount);
+    if (result.expectedTaskCount !== undefined) details.push('Expected Project Tasks: ' + result.expectedTaskCount);
+    if (result.taskCount !== undefined) details.push('Project Tasks created: ' + result.taskCount);
+    if (result.failedTaskCount !== undefined) details.push('Project Tasks failed: ' + result.failedTaskCount);
+    if (result.warnings && result.warnings.length) details.push('Warnings: ' + result.warnings.length);
+
+    if (result.errors && result.errors.length) {
+      details.push('Errors:');
+      for (var i = 0; i < result.errors.length && i < 8; i++) {
+        details.push('- ' + formatProjectError(result.errors[i]));
+      }
+      if (result.errors.length > 8) {
+        details.push('- ' + (result.errors.length - 8) + ' more errors. Use Show Progress or script logs for the full review.');
+      }
+    }
+
+    return details;
+  }
+
+  function formatProjectError(err) {
+    var label = err.label || 'Project';
+    var site = err.siteText || err.siteId || (err.lineRef ? 'Line ' + err.lineRef : '');
+    var message = err.message || 'Unknown error';
+
+    return label + (site ? ' | Site: ' + site : '') + ' | ' + message;
+  }
+
   function updateGenerationModal(opts) {
     ensureProgressStyles();
 
@@ -169,6 +225,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     }
 
     var stateClass = opts.state === 'error' ? 'bc-progress-error' :
+      opts.state === 'warning' ? 'bc-progress-warning' :
       opts.state === 'complete' ? 'bc-progress-complete' : 'bc-progress-running';
     var details = opts.details && opts.details.length ? opts.details.map(function (line) {
       return '<div>' + escapeHtml(line) + '</div>';
@@ -221,6 +278,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   function showProjectProgressPopup(progressUrl) {
     ensureProgressStyles();
     closeProjectProgressPopup();
+    var lastRunHtml = buildLastRunHtml();
 
     var overlay = document.createElement('div');
     overlay.id = 'bc_project_progress_overlay';
@@ -234,6 +292,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
           '</div>' +
           '<button type="button" id="bc_project_progress_close_x" class="bc-progress-icon-btn" aria-label="Close">x</button>' +
         '</div>' +
+        lastRunHtml +
         '<iframe id="bc_project_progress_frame" class="bc-progress-frame" src="' + escapeAttribute(withCacheBuster(progressUrl)) + '"></iframe>' +
         '<div class="bc-progress-actions">' +
           '<button type="button" id="bc_project_progress_refresh" class="bc-progress-secondary">Refresh Progress</button>' +
@@ -288,8 +347,11 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       '.bc-progress-fill{height:16px;border-radius:8px;transition:width .2s ease;background:#2563eb;}' +
       '.bc-progress-running{background:linear-gradient(90deg,#2563eb,#60a5fa,#2563eb);background-size:200% 100%;animation:bcProgressShift 1.1s linear infinite;}' +
       '.bc-progress-complete{background:#059669;}' +
+      '.bc-progress-warning{background:#d97706;}' +
       '.bc-progress-error{background:#dc2626;}' +
       '.bc-progress-details{margin-top:14px;font-size:13px;color:#374151;line-height:1.5;}' +
+      '.bc-progress-last-run{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:10px;margin-bottom:12px;font-size:13px;max-height:150px;overflow:auto;}' +
+      '.bc-progress-last-run-title{font-weight:700;margin-bottom:6px;}' +
       '.bc-progress-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}' +
       '.bc-progress-primary,.bc-progress-secondary{border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:7px 12px;cursor:pointer;}' +
       '.bc-progress-primary{background:#2563eb;border-color:#2563eb;color:#fff;}' +
@@ -304,6 +366,46 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   function removeElement(id) {
     var el = document.getElementById(id);
     if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function saveLastGenerationResult(result) {
+    try {
+      window.sessionStorage.setItem(getLastRunStorageKey(), JSON.stringify(result));
+    } catch (ignore) {
+      // Session storage can be blocked by browser/account settings.
+    }
+  }
+
+  function getLastGenerationResult() {
+    try {
+      var raw = window.sessionStorage.getItem(getLastRunStorageKey());
+      return raw ? JSON.parse(raw) : null;
+    } catch (ignore) {
+      return null;
+    }
+  }
+
+  function getLastRunStorageKey() {
+    var rec = currentRecord.get();
+    return 'bc_project_generation_last_run_' + rec.id;
+  }
+
+  function buildLastRunHtml() {
+    var result = getLastGenerationResult();
+    if (!result || (!result.errors && !result.error)) return '';
+
+    var title = result.success ? 'Last Run Status' :
+      result.partial ? 'Last Run Completed with Errors' : 'Last Run Failed';
+    var lines = buildGenerationDetails(result);
+
+    if (!lines.length && result.error) lines.push(result.error);
+
+    return '<div class="bc-progress-last-run">' +
+      '<div class="bc-progress-last-run-title">' + escapeHtml(title) + '</div>' +
+      lines.map(function (line) {
+        return '<div>' + escapeHtml(line) + '</div>';
+      }).join('') +
+      '</div>';
   }
 
   function escapeHtml(value) {
