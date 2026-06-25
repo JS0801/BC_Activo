@@ -250,7 +250,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         search.createColumn({ name: TASK.TITLE }),
         search.createColumn({ name: TASK.PROJECT }),
         search.createColumn({ name: 'status' }),
-        search.createColumn({ name: 'estimatedwork' })
+        search.createColumn({ name: 'plannedwork' })
       ]
     }).run().each(function (result) {
       tasks.push({
@@ -259,7 +259,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         projectId: result.getValue({ name: TASK.PROJECT }),
         project: result.getText({ name: TASK.PROJECT }) || result.getValue({ name: TASK.PROJECT }),
         status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' }),
-        estimatedwork: result.getValue({ name: 'estimatedwork' })
+        plannedwork: result.getValue({ name: 'plannedwork' })
       });
       return true;
     });
@@ -369,11 +369,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<td>' + escapeHtml(task.id) + '</td>' +
         '<td>' + escapeHtml(task.title) + '</td>' +
         '<td>' + escapeHtml(task.status) + '</td>' +
-        '<td>' + escapeHtml(task.estimatedwork) + '</td>' +
+        '<td>' + escapeHtml(task.plannedwork) + '</td>' +
       '</tr>';
     }).join('');
 
-    return '<table style="margin-top:0;margin-bottom:14px;"><thead><tr><th>Task ID</th><th>Task Name</th><th>Status</th><th>Estimated Work</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    return '<table style="margin-top:0;margin-bottom:14px;"><thead><tr><th>Task ID</th><th>Task Name</th><th>Status</th><th>Planned Work</th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
   function getTaskProgressStatus(expected, created) {
