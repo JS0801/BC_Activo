@@ -24,6 +24,10 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   var ESTIMATE_TYPE_STANDARD = '1';
   var ESTIMATE_TYPE_ROLLOUT = '2';
 
+  // SANDBOX TEST ONLY: keep aligned with the Suitelet test constants.
+  var PROGRESS_TEST_MODE = true;
+  var PROGRESS_TEST_STANDARD_PROJECT_COUNT = 10;
+
   function beforeLoad(ctx) {
     if (ctx.type !== ctx.UserEventType.VIEW) return;
 
@@ -71,7 +75,9 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   function getExpectedProjectCount(rec) {
     var estimateType = String(rec.getValue({ fieldId: FIELD.ESTIMATE_TYPE }) || '');
 
-    if (estimateType === ESTIMATE_TYPE_STANDARD) return 1;
+    if (estimateType === ESTIMATE_TYPE_STANDARD) {
+      return PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
+    }
 
     if (estimateType === ESTIMATE_TYPE_ROLLOUT) {
       var siteCount = getUniqueLineSiteCount(rec);
