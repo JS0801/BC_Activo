@@ -41,7 +41,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   // ---- Estimate line field IDs --------------------------------------------
   var EST_LINE = {
     SITE_ASSET: 'custcol_nx_asset',
-    STAGING_IDS: 'custcol_nscpq_proj_task_staging_ids'
+    STAGING_IDS: 'custcol_nscpq_proj_task_staging_ids',
+    RELATED_SALES_ORDER: 'custcol_bc_related_sales_order'
   };
 
   // ---- CPQ Project Task Staging field IDs ------------------------------------
@@ -86,6 +87,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     FS_CUSTOMER: 'custentity_nx_customer',
     SOURCE_ESTIMATE: 'custentity_bc_source_estimate',
     SEARCH_CUSTOMER: 'customer'
+  };
+
+  // ---- Sales Order field IDs -----------------------------------------------
+  var SO = {
+    PROJECT: 'job',
+    SOURCE_ESTIMATE: 'custbody_bc_source_estimate'
   };
 
   var APPROVED_STATUS_VALUE = '2';
@@ -157,11 +164,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
     var expected = getExpectedProjectCount(est);
     var expectedTasks = getExpectedProjectTaskCount(est, estId);
+    var expectedSalesOrders = getExpectedSalesOrderCount(est);
     var projects = getGeneratedProjects(estId);
     var tasks = getGeneratedProjectTasks(estId);
+    var salesOrders = getGeneratedSalesOrders(estId);
     var created = projects.length;
     var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 0;
     var taskPercent = expectedTasks > 0 ? Math.min(100, Math.round((tasks.length / expectedTasks) * 100)) : 0;
+    var salesOrderPercent = expectedSalesOrders > 0 ? Math.min(100, Math.round((salesOrders.length / expectedSalesOrders) * 100)) : 0;
     var generated = est.getValue(EST.PROJECT_GENERATED) === true;
     var status = getProjectProgressStatusDetails(expected, created, generated);
 
@@ -177,11 +187,16 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       createdTasks: tasks.length,
       remainingTasks: Math.max(expectedTasks - tasks.length, 0),
       taskPercent: taskPercent,
+      expectedSalesOrders: expectedSalesOrders,
+      createdSalesOrders: salesOrders.length,
+      remainingSalesOrders: Math.max(expectedSalesOrders - salesOrders.length, 0),
+      salesOrderPercent: salesOrderPercent,
       generated: generated,
       statusCode: status.code,
       statusText: status.text,
       projects: projects,
-      tasks: tasks
+      tasks: tasks,
+      salesOrders: salesOrders
     };
   }
 
@@ -196,6 +211,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       var siteCount = getUniqueLineSites(est).length;
       return siteCount > 0 ? siteCount + 1 : 0;
     }
+
+    return 0;
+  }
+
+  function getExpectedSalesOrderCount(est) {
+    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+
+    if (estimateType === ESTIMATE_TYPE_STANDARD) return 1;
+    if (estimateType === ESTIMATE_TYPE_ROLLOUT) return getUniqueLineSites(est).length;
 
     return 0;
   }
@@ -268,8 +292,35 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return tasks;
   }
 
+  function getGeneratedSalesOrders(estId) {
+    var salesOrders = [];
+
+    search.create({
+      type: search.Type.SALES_ORDER,
+      filters: [
+        [SO.SOURCE_ESTIMATE, 'anyof', estId],
+        'AND',
+        ['mainline', 'is', 'T']
+      ],
+      columns: [
+        search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
+        search.createColumn({ name: 'tranid' }),
+        search.createColumn({ name: 'status' })
+      ]
+    }).run().each(function (result) {
+      salesOrders.push({
+        id: result.getValue({ name: 'internalid' }),
+        tranid: result.getValue({ name: 'tranid' }),
+        status: result.getText({ name: 'status' }) || result.getValue({ name: 'status' })
+      });
+      return true;
+    });
+
+    return salesOrders;
+  }
+
   function buildProjectProgressPage(progress) {
-    var complete = progress.statusCode === 'COMPLETE';
+    var complete = isOverallProgressComplete(progress);
     var refresh = complete ? '' : '<meta http-equiv="refresh" content="2">';
     var warning = progress.statusCode === 'WARNING' ?
       '<div class="warn">The Estimate is marked generated, but the Project count does not match the expected count. Review the generated Projects before re-running.</div>' : '';
@@ -283,6 +334,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     }).join('') : '<tr><td colspan="4">No generated Projects found yet.</td></tr>';
     var taskStatus = getTaskProgressStatus(progress.expectedTasks, progress.createdTasks);
     var taskHierarchy = buildTaskHierarchyHtml(progress.projects, progress.tasks);
+    var salesOrderStatus = getSalesOrderProgressStatus(progress.expectedSalesOrders, progress.createdSalesOrders);
+    var salesOrderRows = progress.salesOrders.length ? progress.salesOrders.map(function (salesOrder) {
+      return '<tr>' +
+        '<td>' + escapeHtml(salesOrder.id) + '</td>' +
+        '<td>' + escapeHtml(salesOrder.tranid) + '</td>' +
+        '<td>' + escapeHtml(salesOrder.status) + '</td>' +
+      '</tr>';
+    }).join('') : '<tr><td colspan="3">No generated Sales Orders found yet.</td></tr>';
 
     return '<!doctype html>' +
       '<html><head><title>Project Progress</title>' + refresh +
@@ -323,11 +382,23 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<div class="box"><div class="label">Task Status</div><div class="value">' + escapeHtml(taskStatus) + '</div></div>' +
         '<div class="box"><div class="label">Task Source</div><div class="value">CPQ</div></div>' +
       '</div>' +
+      '<h3>Sales Order Progress</h3>' +
+      '<div class="bar"><div class="fill" style="background:' + getSalesOrderBarColor(progress.expectedSalesOrders, progress.createdSalesOrders) + ';width:' + progress.salesOrderPercent + '%;"></div></div>' +
+      '<div>Sales Orders created: <strong>' + progress.createdSalesOrders + '</strong> of <strong>' + progress.expectedSalesOrders + '</strong> (' + progress.salesOrderPercent + '%)</div>' +
+      '<div class="summary">' +
+        '<div class="box"><div class="label">Expected SO</div><div class="value">' + progress.expectedSalesOrders + '</div></div>' +
+        '<div class="box"><div class="label">Created SO</div><div class="value">' + progress.createdSalesOrders + '</div></div>' +
+        '<div class="box"><div class="label">Remaining SO</div><div class="value">' + progress.remainingSalesOrders + '</div></div>' +
+        '<div class="box"><div class="label">SO Status</div><div class="value">' + escapeHtml(salesOrderStatus) + '</div></div>' +
+        '<div class="box"><div class="label">SO Source</div><div class="value">Estimate</div></div>' +
+      '</div>' +
       '<h3>Generated Projects</h3>' +
       '<table><thead><tr><th>Internal ID</th><th>Name / ID</th><th>Parent</th><th>Site</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<h3>Generated Sales Orders</h3>' +
+      '<table><thead><tr><th>Internal ID</th><th>Document #</th><th>Status</th></tr></thead><tbody>' + salesOrderRows + '</tbody></table>' +
       '<h3>Project Task Hierarchy</h3>' +
       taskHierarchy +
-      '<p style="color:#6b7280;margin-top:16px;">This page refreshes automatically until all expected Project records are found.</p>' +
+      '<p style="color:#6b7280;margin-top:16px;">This page refreshes automatically until all expected generated records are found.</p>' +
       '</div></body></html>';
   }
 
@@ -385,6 +456,28 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   }
 
   function getTaskBarColor(expected, created) {
+    if (!expected) return '#94a3b8';
+    if (created >= expected) return '#059669';
+    if (created > 0) return '#2563eb';
+    return '#94a3b8';
+  }
+
+  function isOverallProgressComplete(progress) {
+    var projectsComplete = progress.expected > 0 && progress.created >= progress.expected;
+    var tasksComplete = progress.expectedTasks === 0 || progress.createdTasks >= progress.expectedTasks;
+    var salesOrdersComplete = progress.expectedSalesOrders === 0 || progress.createdSalesOrders >= progress.expectedSalesOrders;
+
+    return projectsComplete && tasksComplete && salesOrdersComplete;
+  }
+
+  function getSalesOrderProgressStatus(expected, created) {
+    if (!expected) return 'No Sales Orders Expected';
+    if (created >= expected) return 'Complete';
+    if (created > 0) return 'Processing / Partial';
+    return 'Not Started';
+  }
+
+  function getSalesOrderBarColor(expected, created) {
     if (!expected) return '#94a3b8';
     if (created >= expected) return '#059669';
     if (created > 0) return '#2563eb';
@@ -479,6 +572,23 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       });
     }
 
+    var salesOrderResult;
+    try {
+      salesOrderResult = createStandardSalesOrderFromEstimate(estId, projectId);
+    } catch (salesOrderError) {
+      return buildPartialFailureResult({
+        flowType: 'STANDARD',
+        expectedProjectCount: targetCount,
+        expectedTaskCount: taskResult.expectedTaskCount,
+        projectIds: projectIds,
+        taskIds: taskResult.taskIds,
+        salesOrderIds: salesOrderError.salesOrderId ? [salesOrderError.salesOrderId] : [],
+        salesOrderErrors: [makeSalesOrderError('Standard Sales Order', salesOrderError.message || String(salesOrderError))],
+        warnings: taskResult.warnings,
+        note: 'Standard Project and Project Tasks were created, but Sales Order creation failed.'
+      });
+    }
+
     markEstimateGenerated(estId, projectId);
 
     return {
@@ -490,11 +600,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       expectedTaskCount: taskResult.expectedTaskCount,
       taskCount: taskResult.taskIds.length,
       taskIds: taskResult.taskIds,
+      salesOrderId: salesOrderResult.salesOrderId,
+      salesOrderIds: [salesOrderResult.salesOrderId],
+      salesOrderCount: 1,
+      estimateLinesUpdated: salesOrderResult.estimateLinesUpdated,
       warnings: taskResult.warnings,
       testMode: PROGRESS_TEST_MODE,
       note: PROGRESS_TEST_MODE ?
         'Progress test mode created ' + projectIds.length + ' Standard Projects. Turn off test mode after validation.' :
-        'Standard Project and Project Tasks created. Sales Order is pending a later phase.'
+        'Standard Project, Project Tasks, and Sales Order created.'
     };
   }
 
@@ -643,6 +757,155 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         error: error
       };
     }
+  }
+
+  function createStandardSalesOrderFromEstimate(estId, projectId) {
+    var salesOrderId;
+
+    try {
+      log.audit({
+        title: 'BC Sales Order transform started',
+        details: JSON.stringify({
+          estimateId: estId,
+          projectId: projectId,
+          flowType: 'STANDARD'
+        })
+      });
+
+      var salesOrder = record.transform({
+        fromType: record.Type.ESTIMATE,
+        fromId: estId,
+        toType: record.Type.SALES_ORDER,
+        isDynamic: false
+      });
+
+      salesOrder.setValue({ fieldId: SO.PROJECT, value: projectId });
+      salesOrder.setValue({ fieldId: SO.SOURCE_ESTIMATE, value: estId });
+
+      var lineCount = salesOrder.getLineCount({ sublistId: 'item' }) || 0;
+      var lineProjectCount = setSalesOrderLineProjects(salesOrder, projectId);
+
+      log.audit({
+        title: 'BC Sales Order save attempt',
+        details: JSON.stringify({
+          estimateId: estId,
+          projectId: projectId,
+          itemLineCount: lineCount,
+          lineProjectCount: lineProjectCount
+        })
+      });
+
+      salesOrderId = salesOrder.save({
+        enableSourcing: true,
+        ignoreMandatoryFields: true
+      });
+
+      log.audit({
+        title: 'BC Sales Order saved',
+        details: JSON.stringify({
+          estimateId: estId,
+          projectId: projectId,
+          salesOrderId: salesOrderId
+        })
+      });
+
+      var estimateLinesUpdated = updateEstimateLinesWithSalesOrder(estId, salesOrderId);
+
+      return {
+        salesOrderId: salesOrderId,
+        lineProjectCount: lineProjectCount,
+        estimateLinesUpdated: estimateLinesUpdated
+      };
+    } catch (e) {
+      log.error({
+        title: 'BC Sales Order creation failed',
+        details: JSON.stringify({
+          estimateId: estId,
+          projectId: projectId,
+          salesOrderId: salesOrderId || '',
+          error: getErrorDetails(e)
+        })
+      });
+
+      if (salesOrderId) {
+        var wrapped = new Error('Sales Order ' + salesOrderId + ' was created, but a later Sales Order/Estimate linkage step failed: ' + (e.message || String(e)));
+        wrapped.salesOrderId = salesOrderId;
+        throw wrapped;
+      }
+
+      throw e;
+    }
+  }
+
+  function setSalesOrderLineProjects(salesOrder, projectId) {
+    var lineCount = salesOrder.getLineCount({ sublistId: 'item' }) || 0;
+    var updated = 0;
+
+    for (var i = 0; i < lineCount; i++) {
+      var itemId = salesOrder.getSublistValue({
+        sublistId: 'item',
+        fieldId: 'item',
+        line: i
+      });
+
+      if (!itemId) continue;
+
+      salesOrder.setSublistValue({
+        sublistId: 'item',
+        fieldId: SO.PROJECT,
+        line: i,
+        value: projectId
+      });
+      updated++;
+    }
+
+    return updated;
+  }
+
+  function updateEstimateLinesWithSalesOrder(estId, salesOrderId) {
+    var est = record.load({
+      type: record.Type.ESTIMATE,
+      id: estId,
+      isDynamic: false
+    });
+    var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+    var updated = 0;
+
+    for (var i = 0; i < lineCount; i++) {
+      var itemId = est.getSublistValue({
+        sublistId: 'item',
+        fieldId: 'item',
+        line: i
+      });
+
+      if (!itemId) continue;
+
+      est.setSublistValue({
+        sublistId: 'item',
+        fieldId: EST_LINE.RELATED_SALES_ORDER,
+        line: i,
+        value: salesOrderId
+      });
+      updated++;
+    }
+
+    est.save({
+      enableSourcing: true,
+      ignoreMandatoryFields: true
+    });
+
+    log.audit({
+      title: 'BC Estimate lines linked to Sales Order',
+      details: JSON.stringify({
+        estimateId: estId,
+        salesOrderId: salesOrderId,
+        lineCount: lineCount,
+        updatedLineCount: updated,
+        fieldId: EST_LINE.RELATED_SALES_ORDER
+      })
+    });
+
+    return updated;
   }
 
   function createProjectTasksForEstimate(est, estId, resolveProjectId) {
@@ -1023,6 +1286,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     };
   }
 
+  function makeSalesOrderError(label, message) {
+    return {
+      type: 'Sales Order',
+      label: label,
+      message: message
+    };
+  }
+
   function updateStagingStatus(stagingId, status) {
     try {
       var values = {};
@@ -1189,8 +1460,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   function buildPartialFailureResult(opts) {
     var projectErrors = opts.projectErrors || opts.errors || [];
     var taskErrors = opts.taskErrors || [];
+    var salesOrderErrors = opts.salesOrderErrors || [];
     var warnings = opts.warnings || [];
-    var allErrors = projectErrors.concat(taskErrors);
+    var allErrors = projectErrors.concat(taskErrors).concat(salesOrderErrors);
     var createdCount = opts.projectIds ? opts.projectIds.length : 0;
     var expectedCount = opts.expectedProjectCount || createdCount;
 
@@ -1203,15 +1475,19 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       projectIds: opts.projectIds || [],
       projectCount: createdCount,
       expectedProjectCount: expectedCount,
+      salesOrderIds: opts.salesOrderIds || [],
+      salesOrderCount: opts.salesOrderIds ? opts.salesOrderIds.length : 0,
       taskIds: opts.taskIds || [],
       taskCount: opts.taskIds ? opts.taskIds.length : 0,
       expectedTaskCount: opts.expectedTaskCount || 0,
       failedProjectCount: projectErrors.length,
       failedTaskCount: taskErrors.length,
+      failedSalesOrderCount: salesOrderErrors.length,
       siteCount: opts.siteCount,
       errors: allErrors,
       projectErrors: projectErrors,
       taskErrors: taskErrors,
+      salesOrderErrors: salesOrderErrors,
       warnings: warnings,
       note: opts.note,
       error: 'Generation completed with errors. Created ' + createdCount + ' of ' + expectedCount + ' expected Projects.'
@@ -1263,6 +1539,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<div class="box"><div class="label">Created Tasks</div><div class="value">' + (result.taskCount || 0) + '</div></div>' +
         '<div class="box"><div class="label">Failed Tasks</div><div class="value">' + (result.failedTaskCount || 0) + '</div></div>' +
         '<div class="box"><div class="label">Warnings</div><div class="value">' + ((result.warnings || []).length) + '</div></div>' +
+      '</div>' +
+      '<div class="summary">' +
+        '<div class="box"><div class="label">Sales Orders</div><div class="value">' + (result.salesOrderCount || 0) + '</div></div>' +
+        '<div class="box"><div class="label">Failed SO</div><div class="value">' + (result.failedSalesOrderCount || 0) + '</div></div>' +
+        '<div class="box"><div class="label">SO ID</div><div class="value">' + escapeHtml(result.salesOrderId || (result.salesOrderIds && result.salesOrderIds[0]) || '') + '</div></div>' +
+        '<div class="box"><div class="label">Estimate Lines</div><div class="value">' + (result.estimateLinesUpdated || 0) + '</div></div>' +
       '</div>' +
       '<h3>Generation Errors</h3>' +
       '<table><thead><tr><th>Attempt</th><th>Site / Line</th><th>Error</th></tr></thead><tbody>' + errorRows + '</tbody></table>' +
