@@ -652,6 +652,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var warnings = [];
     var expectedTaskCount = 0;
 
+    log.audit({
+      title: 'BC Project Task processing started',
+      details: JSON.stringify({
+        estimateId: estId,
+        stagingRecordCount: stagingRecords.records.length,
+        warningCount: stagingRecords.warnings.length
+      })
+    });
+
     for (var i = 0; i < stagingRecords.warnings.length; i++) {
       warnings.push(stagingRecords.warnings[i]);
     }
@@ -663,13 +672,41 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
       if (!shouldProcessStagingStatus(staging.status)) {
         warnings.push('Skipped staging record ' + staging.id + ' because status is "' + (staging.status || 'blank') + '".');
+        log.audit({
+          title: 'BC Project Task staging skipped',
+          details: JSON.stringify({
+            estimateId: estId,
+            stagingId: staging.id,
+            status: staging.status || '',
+            reason: 'Status is not processable'
+          })
+        });
         continue;
       }
 
       try {
         taskRows = parseTaskJson(staging.json, staging.id);
+        log.audit({
+          title: 'BC Project Task staging parsed',
+          details: JSON.stringify({
+            estimateId: estId,
+            stagingId: staging.id,
+            status: staging.status || '',
+            lineRef: staging.lineRef || '',
+            siteAssetId: staging.siteAssetId || '',
+            taskRowCount: taskRows.length
+          })
+        });
       } catch (jsonError) {
         stagingFailed = true;
+        log.error({
+          title: 'BC Project Task JSON parse failed',
+          details: JSON.stringify({
+            estimateId: estId,
+            stagingId: staging.id,
+            error: getErrorDetails(jsonError)
+          })
+        });
         errors.push(makeTaskError(staging, null, jsonError.message || String(jsonError)));
       }
 
@@ -680,6 +717,24 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
         try {
           var projectId = resolveProjectId(staging, taskData);
+          log.audit({
+            title: 'BC Project Task create attempt',
+            details: JSON.stringify({
+              estimateId: estId,
+              stagingId: staging.id,
+              taskIndex: t + 1,
+              projectId: projectId,
+              title: taskData.title || '',
+              status: taskData.status || '',
+              estimatedwork: taskData.estimatedwork || '',
+              plannedwork: taskData.plannedwork || '',
+              duration: taskData.duration || '',
+              startdate: taskData.startdate || '',
+              starttime: taskData.starttime || '',
+              taskType: taskData.custevent_nx_task_type || '',
+              taskAsset: taskData[TASK.ASSET] || staging.siteAssetId || est.getValue(EST.SITE_ASSET) || ''
+            })
+          });
           taskIds.push(createProjectTask({
             estimate: est,
             estimateId: estId,
@@ -689,11 +744,32 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
           }));
         } catch (taskError) {
           stagingFailed = true;
+          log.error({
+            title: 'BC Project Task create failed',
+            details: JSON.stringify({
+              estimateId: estId,
+              stagingId: staging.id,
+              taskIndex: t + 1,
+              title: taskData && taskData.title ? taskData.title : '',
+              error: getErrorDetails(taskError),
+              taskData: taskData
+            })
+          });
           errors.push(makeTaskError(staging, taskData, taskError.message || String(taskError)));
         }
       }
 
       updateStagingStatus(staging.id, stagingFailed ? STAGING_STATUS_FAILED : STAGING_STATUS_PROCESSED);
+      log.audit({
+        title: 'BC Project Task staging completed',
+        details: JSON.stringify({
+          estimateId: estId,
+          stagingId: staging.id,
+          statusSetTo: stagingFailed ? STAGING_STATUS_FAILED : STAGING_STATUS_PROCESSED,
+          createdTaskCountSoFar: taskIds.length,
+          errorCountSoFar: errors.length
+        })
+      });
     }
 
     return {
@@ -732,17 +808,94 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
     addProjectTaskAssignee(task, opts, taskData);
 
-    return task.save({ enableSourcing: true, ignoreMandatoryFields: true });
+    try {
+      log.audit({
+        title: 'BC Project Task save attempt',
+        details: JSON.stringify({
+          estimateId: opts.estimateId,
+          projectId: opts.projectId,
+          stagingId: opts.staging.id,
+          title: taskData.title || '',
+          resource: getProjectTaskResource(opts, taskData) || '',
+          bodyEstimatedWork: taskData.estimatedwork || '',
+          bodyPlannedWork: taskData.plannedwork || '',
+          assigneePlannedWork: getProjectTaskAssigneePlannedWork(taskData),
+          assigneeUnitCost: getProjectTaskAssigneeUnitCost(taskData)
+        })
+      });
+
+      var taskId = task.save({ enableSourcing: true, ignoreMandatoryFields: true });
+
+      log.audit({
+        title: 'BC Project Task saved',
+        details: JSON.stringify({
+          estimateId: opts.estimateId,
+          projectId: opts.projectId,
+          stagingId: opts.staging.id,
+          taskId: taskId,
+          title: taskData.title || ''
+        })
+      });
+
+      return taskId;
+    } catch (saveError) {
+      log.error({
+        title: 'BC Project Task save failed',
+        details: JSON.stringify({
+          estimateId: opts.estimateId,
+          projectId: opts.projectId,
+          stagingId: opts.staging.id,
+          title: taskData.title || '',
+          resource: getProjectTaskResource(opts, taskData) || '',
+          bodyFields: {
+            status: taskData.status || '',
+            estimatedwork: taskData.estimatedwork || '',
+            plannedwork: taskData.plannedwork || '',
+            duration: taskData.duration || '',
+            constrainttype: taskData.constrainttype || '',
+            startdate: taskData.startdate || '',
+            starttime: taskData.starttime || '',
+            taskType: taskData.custevent_nx_task_type || '',
+            taskAsset: taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET) || ''
+          },
+          assigneeFields: {
+            plannedwork: getProjectTaskAssigneePlannedWork(taskData),
+            unitcost: getProjectTaskAssigneeUnitCost(taskData)
+          },
+          error: getErrorDetails(saveError)
+        })
+      });
+      throw saveError;
+    }
   }
 
   function addProjectTaskAssignee(task, opts, taskData) {
     var resourceId = getProjectTaskResource(opts, taskData);
+    var plannedWork = getProjectTaskAssigneePlannedWork(taskData);
+    var unitCost = getProjectTaskAssigneeUnitCost(taskData);
 
     if (!resourceId) {
       throw new Error(
         'No Project Task resource found. Populate Estimate Project Manager or pass resource in the CPQ task JSON.'
       );
     }
+
+    log.audit({
+      title: 'BC Project Task assignee line attempt',
+      details: JSON.stringify({
+        estimateId: opts.estimateId,
+        projectId: opts.projectId,
+        stagingId: opts.staging.id,
+        title: taskData.title || '',
+        sublistId: TASK_ASSIGNEE.SUBLIST,
+        resourceField: TASK_ASSIGNEE.RESOURCE,
+        resource: resourceId,
+        plannedWorkField: TASK_ASSIGNEE.PLANNED_WORK,
+        plannedWork: plannedWork,
+        unitCostField: TASK_ASSIGNEE.UNIT_COST,
+        unitCost: unitCost
+      })
+    });
 
     task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
     task.setCurrentSublistValue({
@@ -754,15 +907,28 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     setCurrentTaskAssigneeField(
       task,
       TASK_ASSIGNEE.PLANNED_WORK,
-      taskData.estimatedwork || taskData.plannedwork || taskData.duration
+      plannedWork
     );
     setCurrentTaskAssigneeField(
       task,
       TASK_ASSIGNEE.UNIT_COST,
-      taskData.unitcost || taskData.cost || taskData.resourcecost || 0
+      unitCost
     );
 
     task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+
+    log.audit({
+      title: 'BC Project Task assignee line committed',
+      details: JSON.stringify({
+        estimateId: opts.estimateId,
+        projectId: opts.projectId,
+        stagingId: opts.staging.id,
+        title: taskData.title || '',
+        resource: resourceId,
+        plannedWork: plannedWork,
+        unitCost: unitCost
+      })
+    });
   }
 
   function getProjectTaskResource(opts, taskData) {
@@ -772,6 +938,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       taskData.projectresource ||
       opts.estimate.getValue(EST.PROJECTMANAGER)
     );
+  }
+
+  function getProjectTaskAssigneePlannedWork(taskData) {
+    return taskData.plannedwork || taskData.estimatedwork || taskData.duration || 0;
+  }
+
+  function getProjectTaskAssigneeUnitCost(taskData) {
+    return taskData.unitcost || taskData.cost || taskData.resourcecost || 0;
   }
 
   function setCurrentTaskAssigneeField(task, fieldId, value) {
@@ -1165,6 +1339,18 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       }
     }
     return values;
+  }
+
+  function getErrorDetails(error) {
+    if (!error) return {};
+
+    return {
+      name: error.name || '',
+      message: error.message || String(error),
+      id: error.id || '',
+      type: error.type || '',
+      stack: error.stack || ''
+    };
   }
 
   function escapeHtml(value) {
