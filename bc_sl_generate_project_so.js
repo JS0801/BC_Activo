@@ -168,17 +168,30 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var projects = getGeneratedProjects(estId);
     var tasks = getGeneratedProjectTasks(estId);
     var salesOrders = getGeneratedSalesOrders(estId);
+    var failedStaging = getFailedStagingCount(estId);
     var created = projects.length;
+    var createdTotal = projects.length + tasks.length + salesOrders.length;
+    var expectedTotal = expected + expectedTasks + expectedSalesOrders;
     var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 0;
+    var totalPercent = expectedTotal > 0 ? Math.min(100, Math.round((createdTotal / expectedTotal) * 100)) : 0;
     var taskPercent = expectedTasks > 0 ? Math.min(100, Math.round((tasks.length / expectedTasks) * 100)) : 0;
     var salesOrderPercent = expectedSalesOrders > 0 ? Math.min(100, Math.round((salesOrders.length / expectedSalesOrders) * 100)) : 0;
     var generated = est.getValue(EST.PROJECT_GENERATED) === true;
-    var status = getProjectProgressStatusDetails(expected, created, generated);
+    var status = getProjectProgressStatusDetails({
+      expectedTotal: expectedTotal,
+      createdTotal: createdTotal,
+      generated: generated,
+      failedStaging: failedStaging
+    });
 
     return {
       estimateId: estId,
       estimateTranId: est.getValue(EST.TRANID),
       estimateType: estimateType,
+      expectedTotal: expectedTotal,
+      createdTotal: createdTotal,
+      remainingTotal: Math.max(expectedTotal - createdTotal, 0),
+      totalPercent: totalPercent,
       expected: expected,
       created: created,
       remaining: Math.max(expected - created, 0),
@@ -191,6 +204,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       createdSalesOrders: salesOrders.length,
       remainingSalesOrders: Math.max(expectedSalesOrders - salesOrders.length, 0),
       salesOrderPercent: salesOrderPercent,
+      failedStaging: failedStaging,
       generated: generated,
       statusCode: status.code,
       statusText: status.text,
@@ -319,9 +333,23 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return salesOrders;
   }
 
+  function getFailedStagingCount(estId) {
+    return search.create({
+      type: STAGING.TYPE,
+      filters: [
+        [STAGING.TRANSACTION, 'anyof', estId],
+        'AND',
+        [STAGING.STATUS, 'is', STAGING_STATUS_FAILED]
+      ],
+      columns: ['internalid']
+    }).runPaged({ pageSize: 1 }).count;
+  }
+
   function buildProjectProgressPage(progress) {
-    var warning = progress.statusCode === 'WARNING' ?
-      '<div class="warn">The Estimate is marked generated, but the Project count does not match the expected count. Review the generated Projects before re-running.</div>' : '';
+    var warning = progress.statusCode === 'FAILED' ?
+      '<div class="warn error">One or more CPQ staging records are marked failed. Review the task details or script logs before re-running.</div>' :
+      progress.statusCode === 'WARNING' ?
+        '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
       return '<tr>' +
         '<td>' + escapeHtml(project.id) + '</td>' +
@@ -348,12 +376,13 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       '.wrap{max-width:820px;margin:0 auto;background:#fff;border:1px solid #d9e2ec;padding:12px;border-radius:6px;}' +
       'h2{font-size:16px;margin:0 0 4px;}h3{font-size:13px;margin:14px 0 6px;}h4{font-size:12px;margin:10px 0 4px;}' +
       '.bar{height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;margin:8px 0;}' +
-      '.fill{height:9px;background:' + getBarColor(progress.statusCode) + ';width:' + progress.percent + '%;}' +
+      '.fill{height:9px;background:' + getBarColor(progress.statusCode) + ';width:' + progress.totalPercent + '%;}' +
       '.summary{display:grid;grid-template-columns:repeat(5,minmax(92px,1fr));gap:6px;margin:8px 0 12px;}' +
       '.box{border:1px solid #e5e7eb;background:#f9fafb;padding:7px;border-radius:4px;}' +
       '.label{font-size:10px;color:#6b7280;text-transform:uppercase;}' +
       '.value{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word;}' +
       '.warn{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin:8px 0;border-radius:4px;}' +
+      '.error{border-color:#dc2626;background:#fef2f2;color:#991b1b;}' +
       'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}' +
       'th,td{border:1px solid #e5e7eb;padding:5px;text-align:left;vertical-align:top;}' +
       'th{background:#f3f4f6;}' +
@@ -361,15 +390,25 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       '<h2>Generation Progress</h2>' +
       '<div>Estimate: ' + escapeHtml(progress.estimateTranId || progress.estimateId) + '</div>' +
       '<div class="bar"><div class="fill"></div></div>' +
-      '<div>Projects created: <strong>' + progress.created + '</strong> of <strong>' + progress.expected + '</strong> (' + progress.percent + '%)</div>' +
+      '<div>Overall generated: <strong>' + progress.createdTotal + '</strong> of <strong>' + progress.expectedTotal + '</strong> (' + progress.totalPercent + '%)</div>' +
       warning +
-      '<h3>Project Progress</h3>' +
+      '<h3>Overall Progress</h3>' +
       '<div class="summary">' +
         '<div class="box"><div class="label">Flow</div><div class="value">' + escapeHtml(getEstimateTypeLabel(progress.estimateType)) + '</div></div>' +
-        '<div class="box"><div class="label">Expected</div><div class="value">' + progress.expected + '</div></div>' +
-        '<div class="box"><div class="label">Created</div><div class="value">' + progress.created + '</div></div>' +
-        '<div class="box"><div class="label">Remaining</div><div class="value">' + progress.remaining + '</div></div>' +
+        '<div class="box"><div class="label">Expected</div><div class="value">' + progress.expectedTotal + '</div></div>' +
+        '<div class="box"><div class="label">Created</div><div class="value">' + progress.createdTotal + '</div></div>' +
+        '<div class="box"><div class="label">Remaining</div><div class="value">' + progress.remainingTotal + '</div></div>' +
         '<div class="box"><div class="label">Status</div><div class="value">' + escapeHtml(progress.statusText) + '</div></div>' +
+      '</div>' +
+      '<h3>Project Progress</h3>' +
+      '<div class="bar"><div class="fill" style="background:' + getCountBarColor(progress.expected, progress.created) + ';width:' + progress.percent + '%;"></div></div>' +
+      '<div>Projects created: <strong>' + progress.created + '</strong> of <strong>' + progress.expected + '</strong> (' + progress.percent + '%)</div>' +
+      '<div class="summary">' +
+        '<div class="box"><div class="label">Expected Projects</div><div class="value">' + progress.expected + '</div></div>' +
+        '<div class="box"><div class="label">Created Projects</div><div class="value">' + progress.created + '</div></div>' +
+        '<div class="box"><div class="label">Remaining Projects</div><div class="value">' + progress.remaining + '</div></div>' +
+        '<div class="box"><div class="label">Failed Staging</div><div class="value">' + progress.failedStaging + '</div></div>' +
+        '<div class="box"><div class="label">Project Source</div><div class="value">Estimate</div></div>' +
       '</div>' +
       '<h3>Project Task Progress</h3>' +
       '<div class="bar"><div class="fill" style="background:' + getTaskBarColor(progress.expectedTasks, progress.createdTasks) + ';width:' + progress.taskPercent + '%;"></div></div>' +
@@ -454,6 +493,13 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return 'Not Started';
   }
 
+  function getCountBarColor(expected, created) {
+    if (!expected) return '#94a3b8';
+    if (created >= expected) return '#059669';
+    if (created > 0) return '#2563eb';
+    return '#94a3b8';
+  }
+
   function getTaskBarColor(expected, created) {
     if (!expected) return '#94a3b8';
     if (created >= expected) return '#059669';
@@ -483,15 +529,17 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return '#94a3b8';
   }
 
-  function getProjectProgressStatusDetails(expected, created, generated) {
-    if (!expected) return { code: 'WAITING', text: 'Waiting' };
-    if (created >= expected) return { code: 'COMPLETE', text: 'Complete' };
-    if (generated && created < expected) return { code: 'WARNING', text: 'Warning' };
-    if (created > 0) return { code: 'PROCESSING', text: 'Processing / Partial' };
+  function getProjectProgressStatusDetails(progress) {
+    if (!progress.expectedTotal) return { code: 'WAITING', text: 'Waiting' };
+    if (progress.failedStaging > 0) return { code: 'FAILED', text: 'Needs Review' };
+    if (progress.generated && progress.createdTotal >= progress.expectedTotal) return { code: 'COMPLETE', text: 'Complete' };
+    if (progress.generated && progress.createdTotal < progress.expectedTotal) return { code: 'WARNING', text: 'Warning' };
+    if (progress.createdTotal > 0) return { code: 'PROCESSING', text: 'Processing / Partial' };
     return { code: 'NOT_STARTED', text: 'Not Started' };
   }
 
   function getBarColor(statusCode) {
+    if (statusCode === 'FAILED') return '#dc2626';
     if (statusCode === 'COMPLETE') return '#059669';
     if (statusCode === 'WARNING') return '#d97706';
     if (statusCode === 'PROCESSING') return '#2563eb';
