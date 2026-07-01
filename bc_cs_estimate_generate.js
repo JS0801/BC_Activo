@@ -16,9 +16,11 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   var ESTIMATE_TYPE_FIELD = 'custbody_bc_estimate_type';
   var ESTIMATE_TYPE_ROLLOUT = '2';
   var projectProgressRefreshTimer = null;
+  var generationModalDismissed = false;
 
   function pageInit() {
     exposeClientFunctions();
+    showStoredGenerationIssueBanner();
   }
 
   // Global so the button (functionName) can find it.
@@ -26,6 +28,8 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var rec = currentRecord.get();
     var estId = rec.id;
     var estimateType = String(rec.getValue({ fieldId: ESTIMATE_TYPE_FIELD }) || '');
+    generationModalDismissed = false;
+    clearLastGenerationResult();
 
     var suiteletUrl = url.resolveScript({
       scriptId: SUITELET_SCRIPT_ID,
@@ -146,6 +150,8 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     if (result.projectId) details.push('Project ID: ' + result.projectId);
     if (result.parentProjectId) details.push('Parent Project ID: ' + result.parentProjectId);
 
+    if (generationModalDismissed) return;
+
     updateGenerationModal({
       state: 'complete',
       title: 'Generation Complete',
@@ -161,6 +167,11 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var created = Number(result.projectCount || 0);
     var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 100;
 
+    if (generationModalDismissed) {
+      showCompactGenerationNotice(result);
+      return;
+    }
+
     updateGenerationModal({
       state: 'warning',
       title: 'Generation Completed with Errors',
@@ -171,6 +182,22 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   }
 
   function showGenerationError(message) {
+    var result = {
+      success: false,
+      error: message,
+      errors: [{
+        label: 'Generation',
+        message: message
+      }]
+    };
+
+    saveLastGenerationResult(result);
+
+    if (generationModalDismissed) {
+      showCompactGenerationNotice(result);
+      return;
+    }
+
     updateGenerationModal({
       state: 'error',
       title: 'Generation Failed',
@@ -234,7 +261,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var details = opts.details && opts.details.length ? opts.details.map(function (line) {
       return '<div>' + escapeHtml(line) + '</div>';
     }).join('') : '';
-    var closeButton = opts.state === 'running' ? '' :
+    var closeButton =
       '<button type="button" id="bc_generation_close" class="bc-progress-secondary">Close</button>';
     var refreshButton = opts.state === 'complete' ?
       '<button type="button" id="bc_generation_refresh" class="bc-progress-primary">Refresh Estimate</button>' : '';
@@ -262,6 +289,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
 
     if (close) {
       close.onclick = function () {
+        generationModalDismissed = true;
         removeElement('bc_generation_overlay');
       };
     }
@@ -291,8 +319,8 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       '<div class="bc-progress-card bc-progress-card-wide" role="dialog" aria-modal="true">' +
         '<div class="bc-progress-popup-head">' +
           '<div>' +
-            '<div class="bc-progress-title">Project Progress</div>' +
-            '<div class="bc-progress-message">Current Project creation details for this Estimate.</div>' +
+            '<div class="bc-progress-title">Generation Progress</div>' +
+            '<div class="bc-progress-message">Current Projects, Tasks, and Sales Orders. Use Refresh for latest values.</div>' +
           '</div>' +
           '<button type="button" id="bc_project_progress_close_x" class="bc-progress-icon-btn" aria-label="Close">x</button>' +
         '</div>' +
@@ -311,10 +339,6 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     document.getElementById('bc_project_progress_refresh').onclick = function () {
       refreshProjectProgressFrame(progressUrl);
     };
-
-    projectProgressRefreshTimer = window.setInterval(function () {
-      refreshProjectProgressFrame(progressUrl);
-    }, 2500);
   }
 
   function refreshProjectProgressFrame(progressUrl) {
@@ -343,25 +367,28 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     style.id = 'bc_progress_styles';
     style.textContent =
       '.bc-progress-overlay{position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.38);display:flex;align-items:center;justify-content:center;padding:24px;font-family:Arial,sans-serif;}' +
-      '.bc-progress-card{width:min(560px,calc(100vw - 48px));background:#fff;border:1px solid #cbd5e1;box-shadow:0 20px 45px rgba(15,23,42,.25);padding:20px;color:#1f2937;}' +
-      '.bc-progress-card-wide{width:min(980px,calc(100vw - 48px));height:min(760px,calc(100vh - 48px));display:flex;flex-direction:column;}' +
-      '.bc-progress-title{font-size:18px;font-weight:700;margin-bottom:6px;}' +
-      '.bc-progress-message{font-size:13px;color:#4b5563;margin-bottom:14px;}' +
-      '.bc-progress-track{height:16px;background:#e5e7eb;border-radius:8px;overflow:hidden;position:relative;}' +
-      '.bc-progress-fill{height:16px;border-radius:8px;transition:width .2s ease;background:#2563eb;}' +
+      '.bc-progress-card{width:min(520px,calc(100vw - 32px));background:#fff;border:1px solid #cbd5e1;box-shadow:0 16px 34px rgba(15,23,42,.22);padding:14px;color:#1f2937;border-radius:6px;}' +
+      '.bc-progress-card-wide{width:min(840px,calc(100vw - 32px));height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;}' +
+      '.bc-progress-title{font-size:16px;font-weight:700;margin-bottom:3px;}' +
+      '.bc-progress-message{font-size:12px;color:#4b5563;margin-bottom:10px;}' +
+      '.bc-progress-track{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden;position:relative;}' +
+      '.bc-progress-fill{height:10px;border-radius:5px;transition:width .2s ease;background:#2563eb;}' +
       '.bc-progress-running{background:linear-gradient(90deg,#2563eb,#60a5fa,#2563eb);background-size:200% 100%;animation:bcProgressShift 1.1s linear infinite;}' +
       '.bc-progress-complete{background:#059669;}' +
       '.bc-progress-warning{background:#d97706;}' +
       '.bc-progress-error{background:#dc2626;}' +
-      '.bc-progress-details{margin-top:14px;font-size:13px;color:#374151;line-height:1.5;}' +
-      '.bc-progress-last-run{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:10px;margin-bottom:12px;font-size:13px;max-height:150px;overflow:auto;}' +
-      '.bc-progress-last-run-title{font-weight:700;margin-bottom:6px;}' +
-      '.bc-progress-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}' +
-      '.bc-progress-primary,.bc-progress-secondary{border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:7px 12px;cursor:pointer;}' +
+      '.bc-progress-details{margin-top:10px;font-size:12px;color:#374151;line-height:1.35;max-height:150px;overflow:auto;}' +
+      '.bc-progress-last-run{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin-bottom:8px;font-size:12px;max-height:105px;overflow:auto;border-radius:4px;}' +
+      '.bc-progress-last-run-title{font-weight:700;margin-bottom:4px;}' +
+      '.bc-progress-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}' +
+      '.bc-progress-primary,.bc-progress-secondary{border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;font-size:12px;border-radius:4px;}' +
       '.bc-progress-primary{background:#2563eb;border-color:#2563eb;color:#fff;}' +
       '.bc-progress-popup-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;}' +
-      '.bc-progress-icon-btn{border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:28px;height:28px;cursor:pointer;font-weight:700;}' +
-      '.bc-progress-frame{border:1px solid #e5e7eb;flex:1;width:100%;min-height:320px;background:#fff;}' +
+      '.bc-progress-icon-btn{border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:24px;height:24px;cursor:pointer;font-weight:700;border-radius:4px;}' +
+      '.bc-progress-frame{border:1px solid #e5e7eb;flex:1;width:100%;min-height:280px;background:#fff;}' +
+      '.bc-progress-toast{position:fixed;right:18px;bottom:18px;z-index:100001;width:min(420px,calc(100vw - 36px));background:#fff;border:1px solid #f59e0b;box-shadow:0 12px 28px rgba(15,23,42,.22);padding:12px;border-radius:6px;color:#1f2937;font-family:Arial,sans-serif;}' +
+      '.bc-progress-toast-title{font-size:14px;font-weight:700;margin-bottom:4px;}' +
+      '.bc-progress-toast-message{font-size:12px;color:#4b5563;line-height:1.35;}' +
       '@keyframes bcProgressShift{0%{background-position:0 0;}100%{background-position:200% 0;}}';
 
     document.head.appendChild(style);
@@ -378,13 +405,26 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     } catch (ignore) {
       // Session storage can be blocked by browser/account settings.
     }
+
+    try {
+      window.localStorage.setItem(getLastRunStorageKey(), JSON.stringify(result));
+    } catch (ignoreLocal) {
+      // Local storage can be blocked by browser/account settings.
+    }
   }
 
   function getLastGenerationResult() {
     try {
       var raw = window.sessionStorage.getItem(getLastRunStorageKey());
-      return raw ? JSON.parse(raw) : null;
+      if (raw) return JSON.parse(raw);
     } catch (ignore) {
+      // Try local storage below.
+    }
+
+    try {
+      var localRaw = window.localStorage.getItem(getLastRunStorageKey());
+      return localRaw ? JSON.parse(localRaw) : null;
+    } catch (ignoreLocal) {
       return null;
     }
   }
@@ -410,6 +450,46 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
         return '<div>' + escapeHtml(line) + '</div>';
       }).join('') +
       '</div>';
+  }
+
+  function clearLastGenerationResult() {
+    try {
+      window.sessionStorage.removeItem(getLastRunStorageKey());
+    } catch (ignore) {}
+
+    try {
+      window.localStorage.removeItem(getLastRunStorageKey());
+    } catch (ignoreLocal) {}
+  }
+
+  function showCompactGenerationNotice(result) {
+    ensureProgressStyles();
+    removeElement('bc_generation_toast');
+
+    var message = result.error || result.note || 'Generation completed with errors.';
+    var toast = document.createElement('div');
+    toast.id = 'bc_generation_toast';
+    toast.className = 'bc-progress-toast';
+    toast.innerHTML =
+      '<div class="bc-progress-toast-title">Generation Needs Review</div>' +
+      '<div class="bc-progress-toast-message">' + escapeHtml(message) + '</div>' +
+      '<div class="bc-progress-actions">' +
+        '<button type="button" id="bc_generation_toast_progress" class="bc-progress-secondary">Show Progress</button>' +
+        '<button type="button" id="bc_generation_toast_close" class="bc-progress-primary">Close</button>' +
+      '</div>';
+
+    document.body.appendChild(toast);
+    document.getElementById('bc_generation_toast_progress').onclick = bcViewProjectProgress;
+    document.getElementById('bc_generation_toast_close').onclick = function () {
+      removeElement('bc_generation_toast');
+    };
+  }
+
+  function showStoredGenerationIssueBanner() {
+    var result = getLastGenerationResult();
+    if (!result || result.success === true || (!result.error && !(result.errors && result.errors.length))) return;
+
+    showCompactGenerationNotice(result);
   }
 
   function escapeHtml(value) {
