@@ -190,6 +190,10 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     if (result.expectedTaskCount !== undefined) details.push('Expected Project Tasks: ' + result.expectedTaskCount);
     if (result.taskCount !== undefined) details.push('Project Tasks created: ' + result.taskCount);
     if (result.failedTaskCount !== undefined) details.push('Project Tasks failed: ' + result.failedTaskCount);
+    if (result.salesOrderCount !== undefined) details.push('Sales Orders created: ' + result.salesOrderCount);
+    if (result.failedSalesOrderCount !== undefined) details.push('Sales Orders failed: ' + result.failedSalesOrderCount);
+    if (result.salesOrderId) details.push('Sales Order ID: ' + result.salesOrderId);
+    if (result.estimateLinesUpdated !== undefined) details.push('Estimate lines linked to Sales Order: ' + result.estimateLinesUpdated);
     if (result.warnings && result.warnings.length) details.push('Warnings: ' + result.warnings.length);
 
     if (result.errors && result.errors.length) {
