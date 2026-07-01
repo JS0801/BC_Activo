@@ -49,7 +49,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   var STAGING = {
     TYPE: 'customrecord_nscpq_task_staging',
     NAME: 'name',
-    STATUS: 'custrecord_task_status',
     JSON: 'custrecord_task_json',
     TRANSACTION: 'custrecord_task_transaction',
     LINE_REF: 'custrecord_task_line_ref'
@@ -103,10 +102,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   // SANDBOX TEST ONLY: set to false before moving beyond progress-bar testing.
   var PROGRESS_TEST_MODE = false;
   var PROGRESS_TEST_STANDARD_PROJECT_COUNT = 10;
-  var STAGING_STATUS_STAGED = 'staged';
-  var STAGING_STATUS_TEST = 'Test';
-  var STAGING_STATUS_PROCESSED = 'Processed';
-  var STAGING_STATUS_FAILED = 'failed';
 
   function onRequest(ctx) {
     var out = { success: false };
@@ -168,7 +163,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var projects = getGeneratedProjects(estId);
     var tasks = getGeneratedProjectTasks(estId);
     var salesOrders = getGeneratedSalesOrders(estId);
-    var failedStaging = getFailedStagingCount(estId);
     var created = projects.length;
     var createdTotal = projects.length + tasks.length + salesOrders.length;
     var expectedTotal = expected + expectedTasks + expectedSalesOrders;
@@ -180,8 +174,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     var status = getProjectProgressStatusDetails({
       expectedTotal: expectedTotal,
       createdTotal: createdTotal,
-      generated: generated,
-      failedStaging: failedStaging
+      generated: generated
     });
 
     return {
@@ -204,7 +197,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       createdSalesOrders: salesOrders.length,
       remainingSalesOrders: Math.max(expectedSalesOrders - salesOrders.length, 0),
       salesOrderPercent: salesOrderPercent,
-      failedStaging: failedStaging,
       generated: generated,
       statusCode: status.code,
       statusText: status.text,
@@ -333,23 +325,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return salesOrders;
   }
 
-  function getFailedStagingCount(estId) {
-    return search.create({
-      type: STAGING.TYPE,
-      filters: [
-        [STAGING.TRANSACTION, 'anyof', estId],
-        'AND',
-        [STAGING.STATUS, 'is', STAGING_STATUS_FAILED]
-      ],
-      columns: ['internalid']
-    }).runPaged({ pageSize: 1 }).count;
-  }
-
   function buildProjectProgressPage(progress) {
-    var warning = progress.statusCode === 'FAILED' ?
-      '<div class="warn error">One or more CPQ staging records are marked failed. Review the task details or script logs before re-running.</div>' :
-      progress.statusCode === 'WARNING' ?
-        '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
+    var warning = progress.statusCode === 'WARNING' ?
+      '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
       return '<tr>' +
         '<td>' + escapeHtml(project.id) + '</td>' +
@@ -382,7 +360,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       '.label{font-size:10px;color:#6b7280;text-transform:uppercase;}' +
       '.value{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word;}' +
       '.warn{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin:8px 0;border-radius:4px;}' +
-      '.error{border-color:#dc2626;background:#fef2f2;color:#991b1b;}' +
       'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}' +
       'th,td{border:1px solid #e5e7eb;padding:5px;text-align:left;vertical-align:top;}' +
       'th{background:#f3f4f6;}' +
@@ -407,7 +384,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         '<div class="box"><div class="label">Expected Projects</div><div class="value">' + progress.expected + '</div></div>' +
         '<div class="box"><div class="label">Created Projects</div><div class="value">' + progress.created + '</div></div>' +
         '<div class="box"><div class="label">Remaining Projects</div><div class="value">' + progress.remaining + '</div></div>' +
-        '<div class="box"><div class="label">Failed Staging</div><div class="value">' + progress.failedStaging + '</div></div>' +
         '<div class="box"><div class="label">Project Source</div><div class="value">Estimate</div></div>' +
       '</div>' +
       '<h3>Project Task Progress</h3>' +
@@ -531,7 +507,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
   function getProjectProgressStatusDetails(progress) {
     if (!progress.expectedTotal) return { code: 'WAITING', text: 'Waiting' };
-    if (progress.failedStaging > 0) return { code: 'FAILED', text: 'Needs Review' };
     if (progress.generated && progress.createdTotal >= progress.expectedTotal) return { code: 'COMPLETE', text: 'Complete' };
     if (progress.generated && progress.createdTotal < progress.expectedTotal) return { code: 'WARNING', text: 'Warning' };
     if (progress.createdTotal > 0) return { code: 'PROCESSING', text: 'Processing / Partial' };
@@ -539,7 +514,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   }
 
   function getBarColor(statusCode) {
-    if (statusCode === 'FAILED') return '#dc2626';
     if (statusCode === 'COMPLETE') return '#059669';
     if (statusCode === 'WARNING') return '#d97706';
     if (statusCode === 'PROCESSING') return '#2563eb';
@@ -629,7 +603,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         taskIds: taskResult.taskIds,
         taskErrors: taskResult.errors,
         warnings: taskResult.warnings,
-        note: 'Standard Project was created, but one or more Project Tasks failed. Review the failed staging records.'
+        note: 'Standard Project was created, but one or more Project Tasks failed. Review the Project Task errors.'
       });
     }
 
@@ -991,22 +965,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
 
     for (var s = 0; s < stagingRecords.records.length; s++) {
       var staging = stagingRecords.records[s];
-      var stagingFailed = false;
       var taskRows = [];
-
-      if (!shouldProcessStagingStatus(staging.status)) {
-        warnings.push('Skipped staging record ' + staging.id + ' because status is "' + (staging.status || 'blank') + '".');
-        log.audit({
-          title: 'BC Project Task staging skipped',
-          details: JSON.stringify({
-            estimateId: estId,
-            stagingId: staging.id,
-            status: staging.status || '',
-            reason: 'Status is not processable'
-          })
-        });
-        continue;
-      }
 
       try {
         taskRows = parseTaskJson(staging.json, staging.id);
@@ -1015,14 +974,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
           details: JSON.stringify({
             estimateId: estId,
             stagingId: staging.id,
-            status: staging.status || '',
             lineRef: staging.lineRef || '',
             siteAssetId: staging.siteAssetId || '',
             taskRowCount: taskRows.length
           })
         });
       } catch (jsonError) {
-        stagingFailed = true;
         log.error({
           title: 'BC Project Task JSON parse failed',
           details: JSON.stringify({
@@ -1067,7 +1024,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
             taskData: taskData
           }));
         } catch (taskError) {
-          stagingFailed = true;
           log.error({
             title: 'BC Project Task create failed',
             details: JSON.stringify({
@@ -1083,13 +1039,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
         }
       }
 
-      updateStagingStatus(staging.id, stagingFailed ? STAGING_STATUS_FAILED : STAGING_STATUS_PROCESSED);
       log.audit({
         title: 'BC Project Task staging completed',
         details: JSON.stringify({
           estimateId: estId,
           stagingId: staging.id,
-          statusSetTo: stagingFailed ? STAGING_STATUS_FAILED : STAGING_STATUS_PROCESSED,
           createdTaskCountSoFar: taskIds.length,
           errorCountSoFar: errors.length
         })
@@ -1330,12 +1284,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return parsed;
   }
 
-  function shouldProcessStagingStatus(status) {
-    var value = String(status || '').toLowerCase();
-    return value === STAGING_STATUS_STAGED.toLowerCase() ||
-      value === STAGING_STATUS_TEST.toLowerCase();
-  }
-
   function makeTaskError(staging, taskData, message) {
     return {
       type: 'Project Task',
@@ -1353,28 +1301,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       label: label,
       message: message
     };
-  }
-
-  function updateStagingStatus(stagingId, status) {
-    try {
-      var values = {};
-      values[STAGING.STATUS] = status;
-
-      record.submitFields({
-        type: STAGING.TYPE,
-        id: stagingId,
-        values: values,
-        options: {
-          enableSourcing: true,
-          ignoreMandatoryFields: true
-        }
-      });
-    } catch (e) {
-      log.error({
-        title: 'Unable to update staging status ' + stagingId,
-        details: e.message || String(e)
-      });
-    }
   }
 
   function getTaskStagingRecordsForEstimate(est, estId, opts) {
@@ -1489,7 +1415,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return [
       search.createColumn({ name: 'internalid' }),
       search.createColumn({ name: STAGING.NAME }),
-      search.createColumn({ name: STAGING.STATUS }),
       search.createColumn({ name: STAGING.JSON }),
       search.createColumn({ name: STAGING.LINE_REF })
     ];
@@ -1499,7 +1424,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     return {
       id: result.getValue({ name: 'internalid' }),
       name: result.getValue({ name: STAGING.NAME }),
-      status: result.getValue({ name: STAGING.STATUS }),
       json: result.getValue({ name: STAGING.JSON }),
       lineRef: result.getValue({ name: STAGING.LINE_REF }) || lineContext.lineRef,
       lineIndex: lineContext.index,
