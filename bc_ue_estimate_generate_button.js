@@ -132,22 +132,23 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     var label = getEstimateTypeLabel(progress.estimateType);
 
     return '' +
-      '<div style="margin:12px 0 16px 0;padding:12px;border:1px solid #d9e2ec;background:#f8fafc;max-width:860px;font-family:Arial,sans-serif;">' +
-        '<div style="display:flex;align-items:center;gap:12px;">' +
-          '<div style="flex:1;min-width:280px;">' +
-            '<div style="display:flex;justify-content:space-between;gap:16px;margin-bottom:8px;">' +
-              '<div style="font-weight:700;color:#1f2937;">Project Generation Progress</div>' +
+      '<div id="bc_inline_project_progress" style="margin:8px 0 10px 0;padding:8px 10px;border:1px solid #d9e2ec;background:#f8fafc;max-width:720px;font-family:Arial,sans-serif;border-radius:4px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="flex:1;min-width:240px;">' +
+            '<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;font-size:12px;">' +
+              '<div style="font-weight:700;color:#1f2937;">Generation Progress</div>' +
               '<div style="color:#4b5563;">' + escapeHtml(label) + '</div>' +
             '</div>' +
-            '<div style="height:14px;background:#e5e7eb;border-radius:7px;overflow:hidden;">' +
-              '<div style="height:14px;width:' + progress.percent + '%;background:' + getBarColor(progress.statusCode) + ';"></div>' +
+            '<div style="height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;">' +
+              '<div style="height:9px;width:' + progress.percent + '%;background:' + getBarColor(progress.statusCode) + ';"></div>' +
             '</div>' +
-            '<div style="display:flex;justify-content:space-between;gap:16px;margin-top:8px;color:#374151;">' +
+            '<div style="display:flex;justify-content:space-between;gap:12px;margin-top:5px;color:#374151;font-size:12px;">' +
               '<div>' + escapeHtml(status) + '</div>' +
               '<div>Projects: ' + progress.created + ' of ' + progress.expected + ' | Remaining: ' + progress.remaining + '</div>' +
             '</div>' +
           '</div>' +
-          '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:6px 12px;cursor:pointer;white-space:nowrap;">Show Progress</button>' +
+          '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Show Progress</button>' +
+          '<button type="button" title="Close" onclick="var el=document.getElementById(\'bc_inline_project_progress\');if(el){el.style.display=\'none\';}" style="border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:24px;height:24px;cursor:pointer;border-radius:4px;font-weight:700;">x</button>' +
         '</div>' +
       '</div>';
   }
