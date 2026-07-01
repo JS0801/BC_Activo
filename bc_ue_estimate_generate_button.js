@@ -25,7 +25,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   var STAGING = {
     TYPE: 'customrecord_nscpq_task_staging',
     JSON: 'custrecord_task_json',
-    STATUS: 'custrecord_task_status',
     TRANSACTION: 'custrecord_task_transaction'
   };
 
@@ -68,18 +67,16 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     var createdProjects = getCreatedProjectCount(rec.id);
     var createdTasks = getCreatedProjectTaskCount(rec.id);
     var createdSalesOrders = getCreatedSalesOrderCount(rec.id);
-    var failedStaging = getFailedStagingCount(rec.id);
     var expected = expectedProjects + expectedTasks + expectedSalesOrders;
     var created = createdProjects + createdTasks + createdSalesOrders;
     var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 0;
     var generated = rec.getValue({ fieldId: FIELD.PROJECT_GENERATED }) === true;
-    var hasStarted = generated || created > 0 || failedStaging > 0;
+    var hasStarted = generated || created > 0;
     var statusCode = getGenerationProgressStatusCode({
       expected: expected,
       created: created,
       generated: generated,
-      hasStarted: hasStarted,
-      failedStaging: failedStaging
+      hasStarted: hasStarted
     });
 
     return {
@@ -93,7 +90,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
       createdTasks: createdTasks,
       expectedSalesOrders: expectedSalesOrders,
       createdSalesOrders: createdSalesOrders,
-      failedStaging: failedStaging,
       percent: percent,
       generated: generated,
       hasStarted: hasStarted,
@@ -102,7 +98,7 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function shouldShowInlineProgress(progress) {
-    return progress.statusCode === 'PROCESSING' || progress.statusCode === 'WARNING' || progress.statusCode === 'FAILED';
+    return progress.statusCode === 'PROCESSING' || progress.statusCode === 'WARNING';
   }
 
   function getExpectedProjectCount(rec) {
@@ -200,20 +196,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     }).runPaged({ pageSize: 1 }).count;
   }
 
-  function getFailedStagingCount(estId) {
-    if (!estId) return 0;
-
-    return search.create({
-      type: STAGING.TYPE,
-      filters: [
-        [STAGING.TRANSACTION, 'anyof', estId],
-        'AND',
-        [STAGING.STATUS, 'is', 'failed']
-      ],
-      columns: ['internalid']
-    }).runPaged({ pageSize: 1 }).count;
-  }
-
   function getTaskJsonCount(jsonText) {
     if (!jsonText) return 0;
 
@@ -258,7 +240,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
               '<span>Projects: ' + progress.createdProjects + '/' + progress.expectedProjects + '</span>' +
               '<span>Tasks: ' + progress.createdTasks + '/' + progress.expectedTasks + '</span>' +
               '<span>Sales Orders: ' + progress.createdSalesOrders + '/' + progress.expectedSalesOrders + '</span>' +
-              '<span>Failed: ' + progress.failedStaging + '</span>' +
             '</div>' +
           '</div>' +
           '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Show Progress</button>' +
@@ -268,7 +249,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function getProjectProgressStatus(progress) {
-    if (progress.statusCode === 'FAILED') return 'Generation needs review';
     if (progress.statusCode === 'WARNING') return 'Generated flag set, but generated record count does not match';
     if (progress.statusCode === 'COMPLETE') return 'Generation complete';
     if (!progress.expected) return 'Waiting for generation criteria';
@@ -278,7 +258,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
 
   function getGenerationProgressStatusCode(progress) {
     if (!progress.expected) return 'WAITING';
-    if (progress.failedStaging > 0) return 'FAILED';
     if (progress.generated && progress.created >= progress.expected) return 'COMPLETE';
     if (progress.generated && progress.created < progress.expected) return 'WARNING';
     if (progress.hasStarted) return 'PROCESSING';
@@ -286,7 +265,6 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function getBarColor(statusCode) {
-    if (statusCode === 'FAILED') return '#dc2626';
     if (statusCode === 'WARNING') return '#d97706';
     if (statusCode === 'COMPLETE') return '#059669';
     return '#2563eb';
