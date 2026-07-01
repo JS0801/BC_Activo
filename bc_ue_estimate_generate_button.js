@@ -25,7 +25,7 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   var ESTIMATE_TYPE_ROLLOUT = '2';
 
   // SANDBOX TEST ONLY: keep aligned with the Suitelet test constants.
-  var PROGRESS_TEST_MODE = true;
+  var PROGRESS_TEST_MODE = false;
   var PROGRESS_TEST_STANDARD_PROJECT_COUNT = 10;
 
   function beforeLoad(ctx) {
