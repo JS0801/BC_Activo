@@ -320,8 +320,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
   }
 
   function buildProjectProgressPage(progress) {
-    var complete = isOverallProgressComplete(progress);
-    var refresh = complete ? '' : '<meta http-equiv="refresh" content="2">';
     var warning = progress.statusCode === 'WARNING' ?
       '<div class="warn">The Estimate is marked generated, but the Project count does not match the expected count. Review the generated Projects before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
@@ -344,22 +342,23 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     }).join('') : '<tr><td colspan="3">No generated Sales Orders found yet.</td></tr>';
 
     return '<!doctype html>' +
-      '<html><head><title>Project Progress</title>' + refresh +
+      '<html><head><title>Project Progress</title>' +
       '<style>' +
-      'body{font-family:Arial,sans-serif;margin:24px;color:#1f2937;background:#f8fafc;}' +
-      '.wrap{max-width:980px;margin:0 auto;background:#fff;border:1px solid #d9e2ec;padding:20px;}' +
-      '.bar{height:18px;background:#e5e7eb;border-radius:9px;overflow:hidden;margin:14px 0;}' +
-      '.fill{height:18px;background:' + getBarColor(progress.statusCode) + ';width:' + progress.percent + '%;}' +
-      '.summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0;}' +
-      '.box{border:1px solid #e5e7eb;background:#f9fafb;padding:12px;}' +
-      '.label{font-size:12px;color:#6b7280;text-transform:uppercase;}' +
-      '.value{font-size:20px;font-weight:700;margin-top:4px;}' +
-      '.warn{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:10px;margin:12px 0;}' +
-      'table{width:100%;border-collapse:collapse;margin-top:16px;}' +
-      'th,td{border:1px solid #e5e7eb;padding:8px;text-align:left;}' +
+      'body{font-family:Arial,sans-serif;margin:10px;color:#1f2937;background:#f8fafc;font-size:12px;}' +
+      '.wrap{max-width:820px;margin:0 auto;background:#fff;border:1px solid #d9e2ec;padding:12px;border-radius:6px;}' +
+      'h2{font-size:16px;margin:0 0 4px;}h3{font-size:13px;margin:14px 0 6px;}h4{font-size:12px;margin:10px 0 4px;}' +
+      '.bar{height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;margin:8px 0;}' +
+      '.fill{height:9px;background:' + getBarColor(progress.statusCode) + ';width:' + progress.percent + '%;}' +
+      '.summary{display:grid;grid-template-columns:repeat(5,minmax(92px,1fr));gap:6px;margin:8px 0 12px;}' +
+      '.box{border:1px solid #e5e7eb;background:#f9fafb;padding:7px;border-radius:4px;}' +
+      '.label{font-size:10px;color:#6b7280;text-transform:uppercase;}' +
+      '.value{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word;}' +
+      '.warn{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin:8px 0;border-radius:4px;}' +
+      'table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;}' +
+      'th,td{border:1px solid #e5e7eb;padding:5px;text-align:left;vertical-align:top;}' +
       'th{background:#f3f4f6;}' +
       '</style></head><body><div class="wrap">' +
-      '<h2>Project Generation Progress</h2>' +
+      '<h2>Generation Progress</h2>' +
       '<div>Estimate: ' + escapeHtml(progress.estimateTranId || progress.estimateId) + '</div>' +
       '<div class="bar"><div class="fill"></div></div>' +
       '<div>Projects created: <strong>' + progress.created + '</strong> of <strong>' + progress.expected + '</strong> (' + progress.percent + '%)</div>' +
@@ -398,7 +397,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       '<table><thead><tr><th>Internal ID</th><th>Document #</th><th>Status</th></tr></thead><tbody>' + salesOrderRows + '</tbody></table>' +
       '<h3>Project Task Hierarchy</h3>' +
       taskHierarchy +
-      '<p style="color:#6b7280;margin-top:16px;">This page refreshes automatically until all expected generated records are found.</p>' +
+      '<p style="color:#6b7280;margin-top:10px;">Use Refresh Progress to load the latest values. Auto-refresh is paused so scrolling stays stable.</p>' +
       '</div></body></html>';
   }
 
