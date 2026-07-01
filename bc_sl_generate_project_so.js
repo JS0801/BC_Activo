@@ -518,8 +518,22 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
       throw new Error('Project records already exist for this estimate. Delete or review them before re-running.');
     }
 
-    if (!est.getValue(EST.PROJECT_END)) {
-      throw new Error('Estimated End Date is required before creating Project records.');
+    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var missingFields = [];
+
+    if (isMissing(est.getValue(EST.PROJECT_START))) missingFields.push('Project Start Date');
+    if (isMissing(est.getValue(EST.PROJECT_END))) missingFields.push('Estimated End Date');
+    if (isMissing(est.getValue(EST.PROJECTMANAGER))) missingFields.push('Project Manager');
+    if (estimateType === ESTIMATE_TYPE_STANDARD && isMissing(est.getValue(EST.SITE_ASSET))) {
+      missingFields.push('Site Asset');
+    }
+
+    if (missingFields.length) {
+      throw new Error(
+        'Please populate the following required field(s) before generating Project and Sales Order: ' +
+        missingFields.join(', ') +
+        '. Then try again.'
+      );
     }
   }
 
@@ -1611,6 +1625,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format'], function (record, search, 
     if (value !== '' && value !== null && value !== undefined) {
       rec.setValue({ fieldId: fieldId, value: value });
     }
+  }
+
+  function isMissing(value) {
+    return value === '' || value === null || value === undefined;
   }
 
   function objectValues(obj) {
