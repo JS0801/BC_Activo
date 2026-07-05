@@ -1830,7 +1830,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     setTaskField(task, 'constrainttype', taskData.constrainttype);
     setTaskField(task, 'duration', taskData.duration);
     setTaskField(task, 'plannedwork', taskData.plannedwork);
-    setTaskField(task, 'startdate', taskData.startdate);
+    setTaskField(task, 'startdate', getProjectTaskStartDate(opts, taskData));
     setTaskField(task, 'starttime', taskData.starttime);
     setTaskField(task, 'custevent_nx_task_type', taskData.custevent_nx_task_type);
 
@@ -1980,6 +1980,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function getProjectTaskAssigneeUnitCost(taskData) {
     return taskData.unitcost || taskData.cost || taskData.resourcecost || 0;
+  }
+
+  function getProjectTaskStartDate(opts, taskData) {
+    if (!isBlankValue(taskData.startdate)) return taskData.startdate;
+    return opts.estimate.getValue(EST.PROJECT_START);
   }
 
   function setCurrentTaskAssigneeField(task, fieldId, value) {
@@ -2585,6 +2590,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function isMissing(value) {
     return value === '' || value === null || value === undefined;
+  }
+
+  function isBlankValue(value) {
+    return value === null || value === undefined || String(value).trim() === '';
   }
 
   function objectValues(obj) {
