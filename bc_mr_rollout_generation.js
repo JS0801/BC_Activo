@@ -144,6 +144,20 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         return;
       }
 
+      if (input.recordType === 'estimate_finalize') {
+        context.write({
+          key: estId,
+          value: JSON.stringify({
+            success: true,
+            estimateId: estId,
+            parentProjectId: input.parentProjectId || '',
+            errors: [],
+            warnings: []
+          })
+        });
+        return;
+      }
+
       var est = record.load({
         type: record.Type.ESTIMATE,
         id: estId,
@@ -289,13 +303,24 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       }
 
       var inputs = [];
+      var childProjectBySite = getExistingChildProjectsBySite(estId);
       for (var i = 0; i < sites.length; i++) {
+        if (!siteNeedsProcessing(est, estId, sites[i], childProjectBySite[String(sites[i].id)])) continue;
+
         inputs.push(makeMapInput({
           recordType: 'site',
           estimateId: estId,
           parentProjectId: parentResult.parentProjectId,
           siteId: sites[i].id,
           siteText: sites[i].text || ''
+        }));
+      }
+
+      if (!inputs.length) {
+        inputs.push(makeMapInput({
+          recordType: 'estimate_finalize',
+          estimateId: estId,
+          parentProjectId: parentResult.parentProjectId
         }));
       }
 
@@ -344,6 +369,45 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       parentProjectId: parentProjectId,
       errors: errors
     };
+  }
+
+  function siteNeedsProcessing(est, estId, site, childProjectId) {
+    if (!childProjectId) return true;
+
+    var expectedTasks = getExpectedTaskCountForSite(est, estId, site.id);
+    var createdTasks = getCreatedProjectTaskCountForProject(estId, childProjectId);
+    if (createdTasks < expectedTasks) return true;
+
+    if (!findExistingSalesOrderForProject(estId, childProjectId)) return true;
+
+    return false;
+  }
+
+  function getExpectedTaskCountForSite(est, estId, siteId) {
+    var stagingRecords = getTaskStagingRecordsForEstimate(est, estId, { siteId: siteId });
+    var expected = 0;
+
+    for (var i = 0; i < stagingRecords.records.length; i++) {
+      try {
+        expected += parseTaskJson(stagingRecords.records[i].json, stagingRecords.records[i].id).length;
+      } catch (ignoreBadJson) {
+        expected++;
+      }
+    }
+
+    return expected;
+  }
+
+  function getCreatedProjectTaskCountForProject(estId, projectId) {
+    return search.create({
+      type: search.Type.PROJECT_TASK || 'projecttask',
+      filters: [
+        [TASK.SOURCE_ESTIMATE, 'anyof', estId],
+        'AND',
+        [TASK.PROJECT, 'anyof', projectId]
+      ],
+      columns: ['internalid']
+    }).runPaged({ pageSize: 1 }).count;
   }
 
   function processRolloutSite(est, input) {
