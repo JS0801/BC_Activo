@@ -6,6 +6,8 @@
  * Script 1.0 (part B) — client handler for the Generate button.
  * Calls the Suitelet that performs the server-side record creation,
  * shows the result, and reloads the Estimate.
+ *
+ * Owner: BlueCollar (Tom F.)
  */
 define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRecord) {
 
@@ -366,8 +368,8 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     style.id = 'bc_progress_styles';
     style.textContent =
       '.bc-progress-overlay{position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.38);display:flex;align-items:center;justify-content:center;padding:24px;font-family:Arial,sans-serif;}' +
-      '.bc-progress-card{width:min(520px,calc(100vw - 32px));background:#fff;border:1px solid #cbd5e1;box-shadow:0 16px 34px rgba(15,23,42,.22);padding:14px;color:#1f2937;border-radius:6px;}' +
-      '.bc-progress-card-wide{width:min(840px,calc(100vw - 32px));height:min(620px,calc(100vh - 32px));display:flex;flex-direction:column;}' +
+      '.bc-progress-card{width:min(480px,calc(100vw - 32px));background:#fff;border:1px solid #cbd5e1;box-shadow:0 16px 34px rgba(15,23,42,.22);padding:12px;color:#1f2937;border-radius:6px;}' +
+      '.bc-progress-card-wide{width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 32px));display:flex;flex-direction:column;}' +
       '.bc-progress-title{font-size:16px;font-weight:700;margin-bottom:3px;}' +
       '.bc-progress-message{font-size:12px;color:#4b5563;margin-bottom:10px;}' +
       '.bc-progress-track{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden;position:relative;}' +
@@ -376,15 +378,15 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       '.bc-progress-complete{background:#059669;}' +
       '.bc-progress-warning{background:#d97706;}' +
       '.bc-progress-error{background:#dc2626;}' +
-      '.bc-progress-details{margin-top:10px;font-size:12px;color:#374151;line-height:1.35;max-height:150px;overflow:auto;}' +
-      '.bc-progress-last-run{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin-bottom:8px;font-size:12px;max-height:105px;overflow:auto;border-radius:4px;}' +
+      '.bc-progress-details{margin-top:10px;font-size:12px;color:#374151;line-height:1.35;max-height:110px;overflow:auto;}' +
+      '.bc-progress-last-run{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px;margin-bottom:8px;font-size:12px;max-height:80px;overflow:auto;border-radius:4px;}' +
       '.bc-progress-last-run-title{font-weight:700;margin-bottom:4px;}' +
       '.bc-progress-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}' +
       '.bc-progress-primary,.bc-progress-secondary{border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;font-size:12px;border-radius:4px;}' +
       '.bc-progress-primary{background:#2563eb;border-color:#2563eb;color:#fff;}' +
       '.bc-progress-popup-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;}' +
       '.bc-progress-icon-btn{border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:24px;height:24px;cursor:pointer;font-weight:700;border-radius:4px;}' +
-      '.bc-progress-frame{border:1px solid #e5e7eb;flex:1;width:100%;min-height:280px;background:#fff;}' +
+      '.bc-progress-frame{border:1px solid #e5e7eb;flex:1;width:100%;min-height:240px;background:#fff;}' +
       '.bc-progress-toast{position:fixed;right:18px;bottom:18px;z-index:100001;width:min(420px,calc(100vw - 36px));background:#fff;border:1px solid #f59e0b;box-shadow:0 12px 28px rgba(15,23,42,.22);padding:12px;border-radius:6px;color:#1f2937;font-family:Arial,sans-serif;}' +
       '.bc-progress-toast-title{font-size:14px;font-weight:700;margin-bottom:4px;}' +
       '.bc-progress-toast-message{font-size:12px;color:#4b5563;line-height:1.35;}' +
