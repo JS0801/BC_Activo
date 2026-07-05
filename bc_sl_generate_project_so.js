@@ -142,6 +142,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         return;
       }
 
+      if (action === 'inline_progress') {
+        writeInlineProjectProgress(ctx, estId);
+        return;
+      }
+
       var est = record.load({
         type: record.Type.ESTIMATE,
         id: estId,
@@ -188,6 +193,17 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
     var progress = getProjectProgress(est, estId);
     ctx.response.write({ output: buildProjectProgressPage(progress) });
+  }
+
+  function writeInlineProjectProgress(ctx, estId) {
+    var est = record.load({
+      type: record.Type.ESTIMATE,
+      id: estId,
+      isDynamic: false
+    });
+
+    var progress = getProjectProgress(est, estId);
+    ctx.response.write({ output: buildInlineProjectProgressHtml(progress) });
   }
 
   function getProjectProgress(est, estId) {
@@ -484,6 +500,60 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       taskHierarchy +
       '<p style="color:#6b7280;margin-top:10px;">Use Refresh Progress to load the latest values. Auto-refresh is paused so scrolling stays stable.</p>' +
       '</div></body></html>';
+  }
+
+  function buildInlineProjectProgressHtml(progress) {
+    var status = getInlineProjectProgressStatus(progress);
+    var label = getEstimateTypeLabel(progress.estimateType);
+    var issueCount = progress.errors && progress.errors.length ? progress.errors.length : 0;
+
+    return '' +
+      '<div id="bc_inline_project_progress" style="margin:8px 0 10px 0;padding:8px 10px;border:1px solid #d9e2ec;background:#f8fafc;max-width:760px;font-family:Arial,sans-serif;border-radius:4px;">' +
+        '<div style="display:flex;align-items:center;gap:10px;">' +
+          '<div style="flex:1;min-width:240px;">' +
+            '<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:5px;font-size:12px;">' +
+              '<div style="font-weight:700;color:#1f2937;">Generation Progress</div>' +
+              '<div style="color:#4b5563;">' + escapeHtml(label) + '</div>' +
+            '</div>' +
+            '<div style="height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;">' +
+              '<div style="height:9px;width:' + progress.totalPercent + '%;background:' + getBarColor(progress.statusCode) + ';"></div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;gap:12px;margin-top:5px;color:#374151;font-size:12px;">' +
+              '<div>' + escapeHtml(status) + '</div>' +
+              '<div>Total: ' + progress.createdTotal + ' of ' + progress.expectedTotal + ' | Remaining: ' + progress.remainingTotal + '</div>' +
+            '</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;color:#4b5563;font-size:11px;">' +
+              '<span>Projects: ' + progress.created + '/' + progress.expected + '</span>' +
+              '<span>Tasks: ' + progress.createdTasks + '/' + progress.expectedTasks + '</span>' +
+              '<span>Sales Orders: ' + progress.createdSalesOrders + '/' + progress.expectedSalesOrders + '</span>' +
+              (issueCount ? '<span>Issues: ' + issueCount + '</span>' : '') +
+            '</div>' +
+          '</div>' +
+          '<button type="button" onclick="bcRefreshInlineProjectProgress(this);" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Refresh</button>' +
+          '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Show Progress</button>' +
+          '<button type="button" title="Close" onclick="var el=document.getElementById(\'bc_inline_project_progress\');if(el){el.style.display=\'none\';}" style="border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:24px;height:24px;cursor:pointer;border-radius:4px;font-weight:700;">x</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function getInlineProjectProgressStatus(progress) {
+    if (progress.statusCode === 'FAILED') return 'Generation failed. Open progress for details and retry options.';
+    if (progress.generationStatus === GEN_STATUS.RETRY_PENDING) return 'Retry is pending background processing';
+    if (progress.generationStatus === GEN_STATUS.PENDING) return 'Generation is pending background processing';
+    if (progress.generationStatus === GEN_STATUS.PARTIAL_ERROR || (progress.statusCode === 'WARNING' && progress.errors && progress.errors.length)) return 'Generation has errors. Open progress for details and retry options.';
+    if (progress.statusCode === 'WARNING') return 'Generated flag set, but generated record count does not match';
+    if (progress.statusCode === 'COMPLETE') return 'Generation complete';
+    if (!progress.expectedTotal) return 'Waiting for generation criteria';
+    if (progress.createdTotal > 0 || isGenerationStatusStarted(progress.generationStatus)) return 'Generation in progress';
+    return 'Not started';
+  }
+
+  function isGenerationStatusStarted(status) {
+    return status === GEN_STATUS.PENDING ||
+      status === GEN_STATUS.PROCESSING ||
+      status === GEN_STATUS.FAILED ||
+      status === GEN_STATUS.PARTIAL_ERROR ||
+      status === GEN_STATUS.RETRY_PENDING;
   }
 
   function buildTaskHierarchyHtml(projects, tasks) {
