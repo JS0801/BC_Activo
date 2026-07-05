@@ -1544,6 +1544,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         setSublistIfPresent(salesOrder, 'item', 'department', i, lines[i].department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, lines[i].classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, lines[i].location);
+        ensureSalesOrderLineAmount(salesOrder, i, lines[i]);
         salesOrder.setSublistValue({
           sublistId: 'item',
           fieldId: SO.PROJECT,
@@ -1587,6 +1588,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var baseLine = {
         itemId: itemId,
         quantity: quantity,
+        rate: est.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i }),
+        amount: est.getSublistValue({ sublistId: 'item', fieldId: 'amount', line: i }),
         department: est.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i }),
         classId: est.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i }),
         location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i })
@@ -1598,6 +1601,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           lines.push({
             itemId: components[c].itemId,
             quantity: quantity * components[c].quantity,
+            rate: components[c].rate,
+            amount: components[c].amount,
             department: baseLine.department,
             classId: baseLine.classId,
             location: baseLine.location
@@ -1646,6 +1651,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         setSublistIfPresent(salesOrder, 'item', 'department', i, department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, location);
+        ensureSalesOrderLineAmount(salesOrder, i, {
+          quantity: quantity * components[c].quantity,
+          rate: components[c].rate,
+          amount: components[c].amount
+        });
         salesOrder.setSublistValue({ sublistId: 'item', fieldId: SO.PROJECT, line: i, value: projectId });
       }
 
@@ -1673,7 +1683,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       if (!itemId) continue;
       components.push({
         itemId: itemId,
-        quantity: toNumber(kit.getSublistValue({ sublistId: 'member', fieldId: 'quantity', line: i }), 1)
+        quantity: toNumber(kit.getSublistValue({ sublistId: 'member', fieldId: 'quantity', line: i }), 1),
+        rate: '',
+        amount: ''
       });
     }
 
@@ -2609,8 +2621,57 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }
   }
 
+  function ensureSalesOrderLineAmount(salesOrder, line, sourceLine) {
+    var currentAmount = getSublistValueSafe(salesOrder, 'item', 'amount', line);
+    if (!isBlankValue(currentAmount)) return false;
+
+    sourceLine = sourceLine || {};
+    var quantity = toNumber(
+      getSublistValueSafe(salesOrder, 'item', 'quantity', line) || sourceLine.quantity,
+      1
+    );
+    var sourceAmount = sourceLine.amount;
+    var sourceRate = sourceLine.rate;
+
+    if (isBlankValue(sourceAmount) && !isBlankValue(sourceRate)) {
+      sourceAmount = toNumber(sourceRate, 0) * quantity;
+    }
+
+    if (isBlankValue(sourceRate) && !isBlankValue(sourceAmount) && quantity) {
+      sourceRate = toNumber(sourceAmount, 0) / quantity;
+    }
+
+    if (isBlankValue(sourceAmount)) sourceAmount = 0;
+    if (isBlankValue(sourceRate)) sourceRate = quantity ? toNumber(sourceAmount, 0) / quantity : 0;
+
+    try {
+      salesOrder.setSublistValue({
+        sublistId: 'item',
+        fieldId: 'price',
+        line: line,
+        value: -1
+      });
+    } catch (ignorePriceLevel) {}
+
+    setSublistIfPresent(salesOrder, 'item', 'rate', line, sourceRate);
+    setSublistIfPresent(salesOrder, 'item', 'amount', line, sourceAmount);
+    return true;
+  }
+
+  function getSublistValueSafe(rec, sublistId, fieldId, line) {
+    try {
+      return rec.getSublistValue({
+        sublistId: sublistId,
+        fieldId: fieldId,
+        line: line
+      });
+    } catch (e) {
+      return '';
+    }
+  }
+
   function toNumber(value, defaultValue) {
-    var n = Number(value);
+    var n = Number(String(value === null || value === undefined ? '' : value).replace(/,/g, ''));
     return isNaN(n) ? defaultValue : n;
   }
 
