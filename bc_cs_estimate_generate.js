@@ -6,8 +6,6 @@
  * Script 1.0 (part B) — client handler for the Generate button.
  * Calls the Suitelet that performs the server-side record creation,
  * shows the result, and reloads the Estimate.
- *
- * Owner: BlueCollar (Tom F.)
  */
 define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRecord) {
 
@@ -30,6 +28,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     var estimateType = String(rec.getValue({ fieldId: ESTIMATE_TYPE_FIELD }) || '');
     generationModalDismissed = false;
     clearLastGenerationResult();
+    hideGenerateButton();
 
     var suiteletUrl = url.resolveScript({
       scriptId: SUITELET_SCRIPT_ID,
@@ -397,6 +396,30 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   function removeElement(id) {
     var el = document.getElementById(id);
     if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  function hideGenerateButton() {
+    try {
+      var button = document.getElementById('custpage_bc_gen_proj_so');
+      var matches = document.querySelectorAll('input[type="button"],button,a');
+
+      if (button) {
+        button.disabled = true;
+        button.style.display = 'none';
+      }
+
+      for (var i = 0; i < matches.length; i++) {
+        var el = matches[i];
+        var label = el.value || el.textContent || '';
+
+        if (String(label).replace(/\s+/g, ' ').trim() === 'Generate Project & Sales Order') {
+          el.disabled = true;
+          el.style.display = 'none';
+        }
+      }
+    } catch (ignore) {
+      // Button hiding is only user feedback; server-side checks still control generation.
+    }
   }
 
   function saveLastGenerationResult(result) {
