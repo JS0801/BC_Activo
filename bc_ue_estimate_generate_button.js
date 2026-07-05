@@ -16,6 +16,8 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     APPROVAL_STATUS: 'custbody_bc_approval_stat_est', // exists on record (sample value = 2)
     PROJECT_GENERATED: 'custbody_bc_project_generated',
     ESTIMATE_TYPE: 'custbody_bc_estimate_type',
+    GENERATION_STATUS: 'custbody_bc_generation_status',
+    ERROR_DETAILS: 'custbody_bc_error_details',
     LINE_SITE_ASSET: 'custcol_nx_asset',
     SOURCE_ESTIMATE: 'custentity_bc_source_estimate',
     TASK_SOURCE_ESTIMATE: 'custevent_bc_source_estimate',
@@ -31,6 +33,14 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   var APPROVED_STATUS_VALUE = '2';
   var ESTIMATE_TYPE_STANDARD = '1';
   var ESTIMATE_TYPE_ROLLOUT = '2';
+  var GEN_STATUS = {
+    PENDING: '1',
+    PROCESSING: '2',
+    COMPLETED: '3',
+    FAILED: '4',
+    PARTIAL_ERROR: '5',
+    RETRY_PENDING: '6'
+  };
 
   // SANDBOX TEST ONLY: keep aligned with the Suitelet test constants.
   var PROGRESS_TEST_MODE = false;
@@ -71,13 +81,18 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     var created = createdProjects + createdTasks + createdSalesOrders;
     var percent = expected > 0 ? Math.min(100, Math.round((created / expected) * 100)) : 0;
     var generated = rec.getValue({ fieldId: FIELD.PROJECT_GENERATED }) === true;
-    var hasStarted = generated || created > 0;
+    var generationStatus = String(rec.getValue({ fieldId: FIELD.GENERATION_STATUS }) || '');
+    var savedErrorCount = getSavedErrorCount(rec.getValue({ fieldId: FIELD.ERROR_DETAILS }));
+    var hasStarted = generated || created > 0 || isGenerationStatusStarted(generationStatus) || savedErrorCount > 0;
     var statusCode = getGenerationProgressStatusCode({
       expected: expected,
       created: created,
       generated: generated,
-      hasStarted: hasStarted
+      hasStarted: hasStarted,
+      generationStatus: generationStatus,
+      savedErrorCount: savedErrorCount
     });
+    if (hasStarted && percent === 0 && generationStatus !== GEN_STATUS.FAILED) percent = 8;
 
     return {
       estimateType: estimateType,
@@ -93,12 +108,14 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
       percent: percent,
       generated: generated,
       hasStarted: hasStarted,
-      statusCode: statusCode
+      statusCode: statusCode,
+      generationStatus: generationStatus,
+      savedErrorCount: savedErrorCount
     };
   }
 
   function shouldShowInlineProgress(progress) {
-    return progress.statusCode === 'PROCESSING' || progress.statusCode === 'WARNING';
+    return progress.hasStarted && progress.statusCode !== 'COMPLETE';
   }
 
   function getExpectedProjectCount(rec) {
@@ -240,6 +257,7 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
               '<span>Projects: ' + progress.createdProjects + '/' + progress.expectedProjects + '</span>' +
               '<span>Tasks: ' + progress.createdTasks + '/' + progress.expectedTasks + '</span>' +
               '<span>Sales Orders: ' + progress.createdSalesOrders + '/' + progress.expectedSalesOrders + '</span>' +
+              (progress.savedErrorCount ? '<span>Issues: ' + progress.savedErrorCount + '</span>' : '') +
             '</div>' +
           '</div>' +
           '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Show Progress</button>' +
@@ -249,6 +267,10 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function getProjectProgressStatus(progress) {
+    if (progress.statusCode === 'FAILED') return 'Generation failed. Open progress for details and retry options.';
+    if (progress.statusCode === 'RETRY_PENDING') return 'Retry is pending background processing';
+    if (progress.statusCode === 'PENDING') return 'Generation is pending background processing';
+    if (progress.statusCode === 'PARTIAL_ERROR') return 'Generation has errors. Open progress for details and retry options.';
     if (progress.statusCode === 'WARNING') return 'Generated flag set, but generated record count does not match';
     if (progress.statusCode === 'COMPLETE') return 'Generation complete';
     if (!progress.expected) return 'Waiting for generation criteria';
@@ -257,6 +279,13 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function getGenerationProgressStatusCode(progress) {
+    if (progress.generationStatus === GEN_STATUS.PENDING) return 'PENDING';
+    if (progress.generationStatus === GEN_STATUS.PROCESSING) return 'PROCESSING';
+    if (progress.generationStatus === GEN_STATUS.COMPLETED) return 'COMPLETE';
+    if (progress.generationStatus === GEN_STATUS.FAILED) return 'FAILED';
+    if (progress.generationStatus === GEN_STATUS.PARTIAL_ERROR) return 'PARTIAL_ERROR';
+    if (progress.generationStatus === GEN_STATUS.RETRY_PENDING) return 'RETRY_PENDING';
+    if (progress.savedErrorCount > 0) return 'PARTIAL_ERROR';
     if (!progress.expected) return 'WAITING';
     if (progress.generated && progress.created >= progress.expected) return 'COMPLETE';
     if (progress.generated && progress.created < progress.expected) return 'WARNING';
@@ -265,9 +294,30 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
   }
 
   function getBarColor(statusCode) {
-    if (statusCode === 'WARNING') return '#d97706';
+    if (statusCode === 'WARNING' || statusCode === 'PARTIAL_ERROR' || statusCode === 'RETRY_PENDING') return '#d97706';
     if (statusCode === 'COMPLETE') return '#059669';
+    if (statusCode === 'FAILED') return '#dc2626';
     return '#2563eb';
+  }
+
+  function isGenerationStatusStarted(status) {
+    return status === GEN_STATUS.PENDING ||
+      status === GEN_STATUS.PROCESSING ||
+      status === GEN_STATUS.FAILED ||
+      status === GEN_STATUS.PARTIAL_ERROR ||
+      status === GEN_STATUS.RETRY_PENDING;
+  }
+
+  function getSavedErrorCount(raw) {
+    if (!raw) return 0;
+
+    try {
+      var parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.length;
+      return parsed.errors && parsed.errors.length ? parsed.errors.length : 0;
+    } catch (e) {
+      return 1;
+    }
   }
 
   function getEstimateTypeLabel(value) {
