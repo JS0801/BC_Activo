@@ -2460,17 +2460,43 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       filters: [
         [SO.SOURCE_ESTIMATE, 'anyof', estId],
         'AND',
-        [SO.PROJECT, 'anyof', projectId],
-        'AND',
         ['mainline', 'is', 'T']
       ],
       columns: [search.createColumn({ name: 'internalid', sort: search.Sort.ASC })]
     }).run().each(function (result) {
-      found = result.getValue({ name: 'internalid' });
-      return false;
+      var salesOrderId = result.getValue({ name: 'internalid' });
+
+      if (salesOrderHasProject(salesOrderId, projectId)) {
+        found = salesOrderId;
+        return false;
+      }
+
+      return true;
     });
 
     return found;
+  }
+
+  function salesOrderHasProject(salesOrderId, projectId) {
+    try {
+      var salesOrder = record.load({
+        type: record.Type.SALES_ORDER,
+        id: salesOrderId,
+        isDynamic: false
+      });
+
+      return String(salesOrder.getValue({ fieldId: SO.PROJECT }) || '') === String(projectId || '');
+    } catch (e) {
+      log.audit({
+        title: 'BC Sales Order project lookup skipped',
+        details: JSON.stringify({
+          salesOrderId: salesOrderId,
+          projectId: projectId,
+          error: getErrorDetails(e)
+        })
+      });
+      return false;
+    }
   }
 
   function findExistingProjectTask(estId, projectId, title, staging, taskData) {
