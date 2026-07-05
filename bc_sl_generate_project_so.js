@@ -101,7 +101,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   var ESTIMATE_TYPE_ROLLOUT = '2';
   var FIXED_FEE_PROJECT_TYPE = '18';
   var ROLLOUT_ASYNC_SITE_THRESHOLD = 10;
-  var RETRY_ALL_MR_THRESHOLD = 10;
   var ROLLOUT_MR_SCRIPT_ID = 'customscript_bc_mr_rollout_generation';
   var ROLLOUT_MR_DEPLOY_NOW = 'customdeploy_bc_mr_rollout_gen_now';
   var ROLLOUT_MR_DEPLOY_SCHED = 'customdeploy_bc_mr_rollout_gen_sched';
@@ -152,6 +151,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         out = retryGenerationItem(est, estId, ctx.request.parameters.key || ctx.request.parameters.retrykey || '');
       } else if (action === 'retry_all') {
         out = retryAllGeneration(est, estId);
+      } else if (action === 'retry_remaining') {
+        out = retryRemainingGeneration(est, estId);
       } else {
         validateEstimate(est, estId);
 
@@ -399,6 +400,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }).join('') : '<tr><td colspan="5">No saved errors found.</td></tr>';
     var retryAllButton = progress.errors.length ?
       '<button type="button" class="primary" onclick="bcRetryAll()">Retry Failed / Blocked</button>' : '';
+    var retryRemainingButton = shouldShowRetryRemaining(progress) ?
+      '<button type="button" class="primary secondary-action" onclick="bcRetryRemaining()">Retry Remaining</button>' : '';
 
     return '<!doctype html>' +
       '<html><head><title>Project Progress</title>' +
@@ -418,12 +421,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       'th{background:#f3f4f6;}' +
       '.actions{display:flex;justify-content:flex-end;gap:8px;margin:8px 0;}' +
       '.primary,.mini{border:1px solid #2563eb;background:#2563eb;color:#fff;padding:5px 9px;border-radius:4px;cursor:pointer;font-size:12px;}' +
+      '.secondary-action{background:#fff;color:#2563eb;}' +
       '.mini{padding:3px 7px;font-size:11px;}' +
       '.muted{color:#6b7280;font-size:11px;}' +
       '</style></head><body><div class="wrap">' +
       '<script>' +
       'function bcRetryOne(key){if(!key)return;var u=new URL(window.location.href);u.searchParams.set("action","retry");u.searchParams.set("key",key);window.location.href=u.toString();}' +
       'function bcRetryAll(){var u=new URL(window.location.href);u.searchParams.set("action","retry_all");u.searchParams.delete("key");window.location.href=u.toString();}' +
+      'function bcRetryRemaining(){var u=new URL(window.location.href);u.searchParams.set("action","retry_remaining");u.searchParams.delete("key");window.location.href=u.toString();}' +
       '</script>' +
       '<h2>Generation Progress</h2>' +
       '<div>Estimate: ' + escapeHtml(progress.estimateTranId || progress.estimateId) + '</div>' +
@@ -438,7 +443,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Remaining</div><div class="value">' + progress.remainingTotal + '</div></div>' +
         '<div class="box"><div class="label">Status</div><div class="value">' + escapeHtml(progress.statusText) + '</div></div>' +
       '</div>' +
-      '<div class="actions">' + retryAllButton + '</div>' +
+      '<div class="actions">' + retryRemainingButton + retryAllButton + '</div>' +
       '<h3>Saved Errors / Blockers</h3>' +
       '<table><thead><tr><th>Type</th><th>Attempt</th><th>Site / Line</th><th>Message</th><th>Action</th></tr></thead><tbody>' + errorRows + '</tbody></table>' +
       '<h3>Project Progress</h3>' +
@@ -585,6 +590,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     if (progress.generated && progress.createdTotal < progress.expectedTotal) return { code: 'WARNING', text: 'Warning' };
     if (progress.createdTotal > 0) return { code: 'PROCESSING', text: 'Processing / Partial' };
     return { code: 'NOT_STARTED', text: 'Not Started' };
+  }
+
+  function shouldShowRetryRemaining(progress) {
+    if (progress.estimateType !== ESTIMATE_TYPE_ROLLOUT) return false;
+    if (progress.generated && progress.createdTotal >= progress.expectedTotal) return false;
+    return progress.expectedTotal > 0;
   }
 
   function getBarColor(statusCode) {
@@ -1021,8 +1032,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     });
 
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
-    var detail = readGenerationErrorDetails(est);
-    var retryableCount = getRetryableErrorCount(detail.errors);
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
@@ -1030,46 +1039,52 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }
 
     if (estimateType === ESTIMATE_TYPE_ROLLOUT) {
-      if (retryableCount > RETRY_ALL_MR_THRESHOLD) {
-        var parentProjectId = findExistingRolloutParentProject(est, estId);
-        setGenerationStatus(estId, GEN_STATUS.RETRY_PENDING, {
-          projectId: parentProjectId || undefined,
-          generated: false
-        });
-
-        var submitResult = submitRolloutMapReduce(estId, ROLLOUT_MR_DEPLOY_NOW);
-        if (submitResult.submitted) {
-          setGenerationStatus(estId, GEN_STATUS.PROCESSING, {
-            projectId: parentProjectId || undefined,
-            generated: false
-          });
-        }
-
-        return {
-          success: true,
-          async: true,
-          flowType: 'ROLLOUT',
-          taskId: submitResult.taskId || '',
-          queued: !submitResult.submitted,
-          note: submitResult.submitted ?
-            'Retry All was sent to Map/Reduce processing.' :
-            'Retry All is pending because the on-demand Map/Reduce deployment is busy. The scheduled deployment will pick it up.'
-        };
-      }
-
-      setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
-      return runRolloutGenerationFlow(est, estId, getUniqueLineSites(est), { retryAll: true });
+      return retryRemainingGeneration(est, estId);
     }
 
     throw new Error('Unsupported or missing Estimate Type. Expected Standard (1) or Rollout (2).');
   }
 
-  function getRetryableErrorCount(errors) {
-    var count = 0;
-    for (var i = 0; i < (errors || []).length; i++) {
-      if (errors[i].retryable !== false) count++;
+  function retryRemainingGeneration(est, estId) {
+    validateEstimate(est, estId, {
+      allowExistingGeneratedRecords: true,
+      allowCompleted: true
+    });
+
+    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    if (estimateType === ESTIMATE_TYPE_STANDARD) {
+      setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
+      return runStandardGenerationFlow(est, estId, { retryRemaining: true });
     }
-    return count;
+
+    if (estimateType !== ESTIMATE_TYPE_ROLLOUT) {
+      throw new Error('Retry Remaining is only supported for Standard or Rollout estimates.');
+    }
+
+    var parentProjectId = findExistingRolloutParentProject(est, estId);
+    setGenerationStatus(estId, GEN_STATUS.RETRY_PENDING, {
+      projectId: parentProjectId || undefined,
+      generated: false
+    });
+
+    var submitResult = submitRolloutMapReduce(estId, ROLLOUT_MR_DEPLOY_NOW);
+    if (submitResult.submitted) {
+      setGenerationStatus(estId, GEN_STATUS.PROCESSING, {
+        projectId: parentProjectId || undefined,
+        generated: false
+      });
+    }
+
+    return {
+      success: true,
+      async: true,
+      flowType: 'ROLLOUT',
+      taskId: submitResult.taskId || '',
+      queued: !submitResult.submitted,
+      note: submitResult.submitted ?
+        'Retry Remaining was sent to Map/Reduce. It will re-check existing records and create only missing site records.' :
+        'Retry Remaining is pending because the on-demand Map/Reduce deployment is busy. The scheduled deployment will pick it up.'
+    };
   }
 
   function runRolloutGenerationFlow(est, estId, sites, opts) {
