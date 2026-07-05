@@ -575,6 +575,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     var errors = [];
     var warnings = stagingRecords.warnings || [];
     var expectedTaskCount = 0;
+    var taskDateStateByProject = {};
 
     for (var s = 0; s < stagingRecords.records.length; s++) {
       var staging = stagingRecords.records[s];
@@ -594,6 +595,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
 
         try {
           var projectId = resolveProjectId(staging, taskData);
+          applyProjectTaskSchedule(est, projectId, taskData, taskDateStateByProject);
+
           var existingTaskId = findExistingProjectTask(estId, projectId, taskData.title, staging, taskData);
           if (existingTaskId) {
             taskIds.push(existingTaskId);
@@ -655,8 +658,75 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   }
 
   function getProjectTaskStartDate(opts, taskData) {
+    if (taskData.__bcScheduledStartDate) return taskData.__bcScheduledStartDate;
     if (!isBlankValue(taskData.startdate)) return taskData.startdate;
     return opts.estimate.getValue(EST.PROJECT_START);
+  }
+
+  function applyProjectTaskSchedule(est, projectId, taskData, taskDateStateByProject) {
+    var projectKey = String(projectId || 'default');
+    var nextAvailableDate = taskDateStateByProject[projectKey] || getFirstProjectTaskBusinessDate(est);
+    var originalStartDate = taskData.startdate;
+    var providedStartDate = getDateOnlyValue(originalStartDate);
+    var candidateDate = isBlankValue(originalStartDate) || !providedStartDate
+      ? nextAvailableDate
+      : getNextBusinessDate(providedStartDate);
+
+    if (compareDateOnly(candidateDate, nextAvailableDate) < 0) {
+      candidateDate = nextAvailableDate;
+    }
+
+    taskData.__bcOriginalStartDate = isBlankValue(originalStartDate) ? '' : originalStartDate;
+    taskData.__bcScheduledStartDate = candidateDate;
+    taskData.startdate = candidateDate;
+    taskDateStateByProject[projectKey] = getNextBusinessDate(addDays(candidateDate, 1));
+
+    return candidateDate;
+  }
+
+  function getFirstProjectTaskBusinessDate(est) {
+    return getNextBusinessDate(est.getValue(EST.PROJECT_START) || new Date());
+  }
+
+  function getNextBusinessDate(value) {
+    var date = getDateOnlyValue(value) || getDateOnlyValue(new Date());
+
+    while (isWeekendDate(date)) {
+      date = addDays(date, 1);
+    }
+
+    return date;
+  }
+
+  function getDateOnlyValue(value) {
+    if (isBlankValue(value)) return null;
+
+    var date = parseDateValue(value);
+    if (!isValidDate(date)) return null;
+
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  function addDays(date, days) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+  }
+
+  function compareDateOnly(a, b) {
+    var dateA = getDateOnlyValue(a);
+    var dateB = getDateOnlyValue(b);
+    if (!dateA && !dateB) return 0;
+    if (!dateA) return -1;
+    if (!dateB) return 1;
+    return dateA.getTime() - dateB.getTime();
+  }
+
+  function isWeekendDate(date) {
+    var day = date.getDay();
+    return day === 0 || day === 6;
+  }
+
+  function isValidDate(date) {
+    return Object.prototype.toString.call(date) === '[object Date]' && !isNaN(date.getTime());
   }
 
   function createRolloutSalesOrdersFromEstimate(est, estId, sites, childProjectBySite, blockedTaskSites) {
@@ -850,7 +920,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       }
     }
 
-    return { records: objectValues(recordsById), warnings: warnings };
+    return { records: sortStagingRecords(objectValues(recordsById)), warnings: warnings };
   }
 
   function filterLineContextsBySite(lines, siteId) {
@@ -939,6 +1009,20 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       siteAssetId: lineContext.siteAssetId,
       siteText: lineContext.siteText
     };
+  }
+
+  function sortStagingRecords(records) {
+    return (records || []).sort(function (a, b) {
+      var lineA = a.lineIndex !== undefined && a.lineIndex !== null ? toNumber(a.lineIndex, 999999) : toNumber(a.lineRef, 999999);
+      var lineB = b.lineIndex !== undefined && b.lineIndex !== null ? toNumber(b.lineIndex, 999999) : toNumber(b.lineRef, 999999);
+      if (lineA !== lineB) return lineA - lineB;
+
+      var lineRefA = toNumber(a.lineRef, 999999);
+      var lineRefB = toNumber(b.lineRef, 999999);
+      if (lineRefA !== lineRefB) return lineRefA - lineRefB;
+
+      return toNumber(a.id, 999999) - toNumber(b.id, 999999);
+    });
   }
 
   function findExistingRolloutParentProject(est, estId) {
