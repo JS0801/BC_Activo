@@ -35,7 +35,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   var EST_LINE = {
     SITE_ASSET: 'custcol_nx_asset',
     STAGING_IDS: 'custcol_nscpq_proj_task_staging_ids',
-    RELATED_SALES_ORDER: 'custcol_bc_related_sales_order'
+    RELATED_SALES_ORDER: 'custcol_bc_related_sales_order',
+    TAX_CODE: 'taxcode'
   };
 
   var STAGING = {
@@ -746,6 +747,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         setSublistIfPresent(salesOrder, 'item', 'department', i, lines[i].department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, lines[i].classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, lines[i].location);
+        setSublistIfPresent(salesOrder, 'item', EST_LINE.TAX_CODE, i, lines[i].taxCode);
         ensureSalesOrderLineAmount(salesOrder, i, lines[i]);
         salesOrder.setSublistValue({ sublistId: 'item', fieldId: SO.PROJECT, line: i, value: projectId });
       }
@@ -781,7 +783,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       var lineDefaults = {
         department: est.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i }),
         classId: est.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i }),
-        location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i })
+        location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i }),
+        taxCode: est.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.TAX_CODE, line: i })
       };
 
       if (isKitItemType(itemType)) {
@@ -797,7 +800,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
             forceAmount: true,
             department: lineDefaults.department,
             classId: lineDefaults.classId,
-            location: lineDefaults.location
+            location: lineDefaults.location,
+            taxCode: lineDefaults.taxCode
           });
         }
       } else {
@@ -808,7 +812,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
           amount: sourceAmount,
           department: lineDefaults.department,
           classId: lineDefaults.classId,
-          location: lineDefaults.location
+          location: lineDefaults.location,
+          taxCode: lineDefaults.taxCode
         });
       }
     }
