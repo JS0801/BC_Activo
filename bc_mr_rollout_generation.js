@@ -97,9 +97,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
 
   function getInputData() {
     var estId = runtime.getCurrentScript().getParameter({ name: MR_PARAM_ESTIMATE_ID });
-    if (estId) return [String(estId)];
+    if (estId) return buildSiteInputsForEstimate(estId);
 
-    return search.create({
+    var inputs = [];
+
+    search.create({
       type: search.Type.ESTIMATE || 'estimate',
       filters: [
         ['mainline', 'is', 'T'],
@@ -115,12 +117,144 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         ]
       ],
       columns: [search.createColumn({ name: 'internalid', sort: search.Sort.ASC })]
+    }).run().each(function (result) {
+      inputs = inputs.concat(buildSiteInputsForEstimate(result.getValue({ name: 'internalid' })));
+      return true;
     });
+
+    return inputs;
   }
 
   function map(context) {
-    var estId = getEstimateIdFromContext(context.value);
+    var input = parseMapInput(context.value);
+    var estId = input.estimateId;
 
+    try {
+      if (input.recordType === 'estimate_error') {
+        context.write({
+          key: estId,
+          value: JSON.stringify({
+            success: false,
+            estimateId: estId,
+            parentProjectId: input.parentProjectId || '',
+            errors: input.errors || [],
+            warnings: []
+          })
+        });
+        return;
+      }
+
+      var est = record.load({
+        type: record.Type.ESTIMATE,
+        id: estId,
+        isDynamic: false
+      });
+
+      var result = processRolloutSite(est, input);
+      context.write({ key: estId, value: JSON.stringify(result) });
+    } catch (e) {
+      context.write({
+        key: estId,
+        value: JSON.stringify({
+          success: false,
+          estimateId: estId,
+          parentProjectId: input.parentProjectId || '',
+          siteId: input.siteId || '',
+          siteText: input.siteText || '',
+          errors: [{
+            key: 'mr:site:' + estId + ':' + (input.siteId || 'estimate'),
+            type: 'Map/Reduce',
+            label: input.siteId ? 'Site ' + (input.siteText || input.siteId) : 'Rollout Background Processing',
+            siteId: input.siteId || '',
+            siteText: input.siteText || '',
+            message: e.message || String(e)
+          }],
+          warnings: []
+        })
+      });
+      log.error({
+        title: 'BC Rollout MR site failed',
+        details: JSON.stringify({ input: input, error: getErrorDetails(e) })
+      });
+    }
+  }
+
+  function reduce(context) {
+    var estId = context.key;
+    var parentProjectId = '';
+    var childProjectIds = [];
+    var taskIds = [];
+    var salesOrderIds = [];
+    var errors = [];
+    var warnings = [];
+
+    for (var i = 0; i < context.values.length; i++) {
+      var result = JSON.parse(context.values[i] || '{}');
+      if (result.parentProjectId && !parentProjectId) parentProjectId = result.parentProjectId;
+      if (result.childProjectId) childProjectIds.push(result.childProjectId);
+      if (result.taskIds && result.taskIds.length) taskIds = taskIds.concat(result.taskIds);
+      if (result.salesOrderIds && result.salesOrderIds.length) salesOrderIds = salesOrderIds.concat(result.salesOrderIds);
+      if (result.errors && result.errors.length) errors = errors.concat(result.errors);
+      if (result.warnings && result.warnings.length) warnings = warnings.concat(result.warnings);
+    }
+
+    if (!parentProjectId) {
+      try {
+        var est = record.load({
+          type: record.Type.ESTIMATE,
+          id: estId,
+          isDynamic: false
+        });
+        parentProjectId = findExistingRolloutParentProject(est, estId);
+      } catch (ignoreParentLookup) {}
+    }
+
+    if (!parentProjectId) {
+      errors.push({
+        key: 'project:rollout-parent',
+        type: 'Project',
+        label: 'Rollout Parent Project',
+        message: 'Parent Project was not found after all site processing completed.'
+      });
+    }
+
+    if (errors.length) {
+      persistGenerationErrors(
+        estId,
+        errors,
+        warnings,
+        hasAnyCreated(parentProjectId, childProjectIds, taskIds, salesOrderIds) ? GEN_STATUS.PARTIAL_ERROR : GEN_STATUS.FAILED
+      );
+    } else {
+      markEstimateGenerated(estId, parentProjectId);
+    }
+
+    context.write({
+      key: estId,
+      value: JSON.stringify({
+        success: errors.length === 0,
+        parentProjectId: parentProjectId,
+        childProjectIds: childProjectIds,
+        taskIds: taskIds,
+        salesOrderIds: salesOrderIds,
+        errorCount: errors.length
+      })
+    });
+  }
+
+  function summarize(summary) {
+    summary.mapSummary.errors.iterator().each(function (key, value) {
+      log.error({ title: 'BC Rollout MR map error ' + key, details: value });
+      return true;
+    });
+
+    summary.reduceSummary.errors.iterator().each(function (key, value) {
+      log.error({ title: 'BC Rollout MR reduce error ' + key, details: value });
+      return true;
+    });
+  }
+
+  function buildSiteInputsForEstimate(estId) {
     try {
       var est = record.load({
         type: record.Type.ESTIMATE,
@@ -129,34 +263,58 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       });
 
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
-      var result = processRolloutEstimate(est, estId);
-      context.write({ key: estId, value: JSON.stringify(result) });
+
+      var sites = getUniqueLineSites(est);
+      if (!sites.length) {
+        return [makeMapInput({
+          recordType: 'estimate_error',
+          estimateId: estId,
+          errors: [{
+            key: 'estimate:no-sites:' + estId,
+            type: 'Rollout',
+            label: 'Rollout Site Input',
+            message: 'Rollout Estimate has no unique line-level Site Assets.'
+          }]
+        })];
+      }
+
+      var parentResult = ensureRolloutParentProject(est, estId);
+      if (parentResult.errors.length) {
+        return [makeMapInput({
+          recordType: 'estimate_error',
+          estimateId: estId,
+          parentProjectId: parentResult.parentProjectId || '',
+          errors: parentResult.errors
+        })];
+      }
+
+      var inputs = [];
+      for (var i = 0; i < sites.length; i++) {
+        inputs.push(makeMapInput({
+          recordType: 'site',
+          estimateId: estId,
+          parentProjectId: parentResult.parentProjectId,
+          siteId: sites[i].id,
+          siteText: sites[i].text || ''
+        }));
+      }
+
+      return inputs;
     } catch (e) {
-      persistGenerationErrors(estId, [{
-        key: 'mr:estimate:' + estId,
-        type: 'Map/Reduce',
-        label: 'Rollout Background Processing',
-        message: e.message || String(e)
-      }], [], GEN_STATUS.FAILED);
-      log.error({
-        title: 'BC Rollout MR estimate failed',
-        details: JSON.stringify({ estimateId: estId, error: getErrorDetails(e) })
-      });
-      throw e;
+      return [makeMapInput({
+        recordType: 'estimate_error',
+        estimateId: estId,
+        errors: [{
+          key: 'estimate:input:' + estId,
+          type: 'Map/Reduce Input',
+          label: 'Build Site Inputs',
+          message: e.message || String(e)
+        }]
+      })];
     }
   }
 
-  function summarize(summary) {
-    summary.mapSummary.errors.iterator().each(function (key, value) {
-      log.error({ title: 'BC Rollout MR map error ' + key, details: value });
-      return true;
-    });
-  }
-
-  function processRolloutEstimate(est, estId) {
-    var sites = getUniqueLineSites(est);
-    if (!sites.length) throw new Error('Rollout Estimate has no unique line-level Site Assets.');
-
+  function ensureRolloutParentProject(est, estId) {
     var errors = [];
     var parentProjectId = findExistingRolloutParentProject(est, estId);
 
@@ -170,6 +328,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         attemptLabel: 'Rollout Parent Project',
         errorKey: 'project:rollout-parent'
       });
+
       if (parentResult.projectId) parentProjectId = parentResult.projectId;
       if (parentResult.error) errors.push(parentResult.error);
     }
@@ -181,93 +340,128 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       });
     }
 
+    return {
+      parentProjectId: parentProjectId,
+      errors: errors
+    };
+  }
+
+  function processRolloutSite(est, input) {
+    var estId = input.estimateId;
+    var site = {
+      id: input.siteId,
+      text: input.siteText || ''
+    };
+
+    if (!site.id) throw new Error('Missing Site Asset in Map/Reduce input.');
+
+    var errors = [];
+    var parentProjectId = input.parentProjectId || findExistingRolloutParentProject(est, estId);
     var childProjectBySite = getExistingChildProjectsBySite(estId);
-    var childProjectIds = [];
+    var childProjectId = childProjectBySite[String(site.id)];
 
-    if (parentProjectId) {
-      for (var i = 0; i < sites.length; i++) {
-        var siteKey = String(sites[i].id);
-        if (childProjectBySite[siteKey]) {
-          childProjectIds.push(childProjectBySite[siteKey]);
-          continue;
-        }
+    if (!parentProjectId) {
+      errors.push({
+        key: 'project:rollout-parent',
+        type: 'Project',
+        label: 'Rollout Parent Project',
+        message: 'Parent Project was not found before processing Site ' + (site.text || site.id) + '.'
+      });
+    }
 
-        var childResult = tryCreateProject({
-          estimate: est,
-          estimateId: estId,
-          parentId: parentProjectId,
-          siteAssetId: sites[i].id,
-          siteText: sites[i].text,
-          namePrefix: 'Rollout Site ' + (sites[i].text || sites[i].id),
-          attemptLabel: 'Rollout Child Project for Site ' + (sites[i].text || sites[i].id),
-          errorKey: 'project:child:' + sites[i].id
-        });
+    if (parentProjectId && !childProjectId) {
+      var childResult = tryCreateProject({
+        estimate: est,
+        estimateId: estId,
+        parentId: parentProjectId,
+        siteAssetId: site.id,
+        siteText: site.text,
+        namePrefix: 'Rollout Site ' + (site.text || site.id),
+        attemptLabel: 'Rollout Child Project for Site ' + (site.text || site.id),
+        errorKey: 'project:child:' + site.id
+      });
 
-        if (childResult.projectId) {
-          childProjectIds.push(childResult.projectId);
-          childProjectBySite[siteKey] = childResult.projectId;
-        }
-        if (childResult.error) {
-          errors.push(childResult.error);
-          errors.push(makeBlockedError({
-            key: 'blocked:task:site:' + sites[i].id,
-            type: 'Blocked Project Task',
-            label: 'Project Tasks for Site ' + (sites[i].text || sites[i].id),
-            siteId: sites[i].id,
-            siteText: sites[i].text,
-            message: 'Blocked because the child Project was not created.',
-            blockedBy: childResult.error.key
-          }));
-          errors.push(makeBlockedError({
-            key: 'blocked:so:site:' + sites[i].id,
-            type: 'Blocked Sales Order',
-            label: 'Sales Order for Site ' + (sites[i].text || sites[i].id),
-            siteId: sites[i].id,
-            siteText: sites[i].text,
-            message: 'Blocked because the child Project was not created.',
-            blockedBy: childResult.error.key
-          }));
-        }
+      if (childResult.projectId) childProjectId = childResult.projectId;
+      if (childResult.error) {
+        errors.push(childResult.error);
+        errors.push(makeBlockedError({
+          key: 'blocked:task:site:' + site.id,
+          type: 'Blocked Project Task',
+          label: 'Project Tasks for Site ' + (site.text || site.id),
+          siteId: site.id,
+          siteText: site.text,
+          message: 'Blocked because the child Project was not created.',
+          blockedBy: childResult.error.key
+        }));
+        errors.push(makeBlockedError({
+          key: 'blocked:so:site:' + site.id,
+          type: 'Blocked Sales Order',
+          label: 'Sales Order for Site ' + (site.text || site.id),
+          siteId: site.id,
+          siteText: site.text,
+          message: 'Blocked because the child Project was not created.',
+          blockedBy: childResult.error.key
+        }));
       }
     }
 
-    var taskResult = createProjectTasksForEstimate(est, estId, function (staging, taskData) {
-      var siteId = staging.siteAssetId || taskData[TASK.ASSET];
-      if (!siteId) throw new Error('No Site Asset found for staging record ' + staging.id + '.');
-
-      var childProjectId = childProjectBySite[String(siteId)];
-      if (!childProjectId) throw new Error('No child Project found for Site Asset ' + siteId + '.');
-
-      return childProjectId;
-    });
-
-    var taskErrorSites = getErrorSiteMap(taskResult.errors);
-    var salesOrderResult = createRolloutSalesOrdersFromEstimate(est, estId, sites, childProjectBySite, taskErrorSites);
-    var allErrors = errors.concat(taskResult.errors).concat(salesOrderResult.errors);
-
-    if (allErrors.length) {
-      persistGenerationErrors(estId, allErrors, taskResult.warnings, hasAnyCreated(parentProjectId, childProjectIds, taskResult.taskIds, salesOrderResult.salesOrderIds) ? GEN_STATUS.PARTIAL_ERROR : GEN_STATUS.FAILED);
+    if (!childProjectId) {
       return {
         success: false,
-        partial: true,
-        flowType: 'ROLLOUT',
+        estimateId: estId,
         parentProjectId: parentProjectId,
-        childProjectIds: childProjectIds,
-        taskIds: taskResult.taskIds,
-        salesOrderIds: salesOrderResult.salesOrderIds,
-        errorCount: allErrors.length
+        siteId: site.id,
+        siteText: site.text,
+        errors: errors,
+        warnings: []
       };
     }
 
-    markEstimateGenerated(estId, parentProjectId);
+    var siteProjectMap = {};
+    siteProjectMap[String(site.id)] = childProjectId;
+
+    var taskResult = createProjectTasksForEstimate(est, estId, function () {
+      return childProjectId;
+    }, { siteId: site.id });
+
+    var taskErrorSites = getErrorSiteMap(taskResult.errors);
+    var salesOrderResult = createRolloutSalesOrdersFromEstimate(est, estId, [site], siteProjectMap, taskErrorSites);
+    var allErrors = errors.concat(taskResult.errors).concat(salesOrderResult.errors);
+
     return {
-      success: true,
-      flowType: 'ROLLOUT',
+      success: allErrors.length === 0,
+      estimateId: estId,
       parentProjectId: parentProjectId,
-      childProjectIds: childProjectIds,
+      childProjectId: childProjectId,
+      siteId: site.id,
+      siteText: site.text,
       taskIds: taskResult.taskIds,
-      salesOrderIds: salesOrderResult.salesOrderIds
+      salesOrderIds: salesOrderResult.salesOrderIds,
+      errors: allErrors,
+      warnings: taskResult.warnings || []
     };
+  }
+
+  function parseMapInput(value) {
+    if (!value) return {};
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      return {
+        recordType: 'estimate_error',
+        estimateId: getEstimateIdFromContext(value),
+        errors: [{
+          key: 'mr:input-parse:' + value,
+          type: 'Map/Reduce Input',
+          label: 'Parse Site Input',
+          message: e.message || String(e)
+        }]
+      };
+    }
+  }
+
+  function makeMapInput(input) {
+    return JSON.stringify(input || {});
   }
 
   function createProject(opts) {
@@ -309,8 +503,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     }
   }
 
-  function createProjectTasksForEstimate(est, estId, resolveProjectId) {
-    var stagingRecords = getTaskStagingRecordsForEstimate(est, estId);
+  function createProjectTasksForEstimate(est, estId, resolveProjectId, opts) {
+    opts = opts || {};
+    var stagingRecords = getTaskStagingRecordsForEstimate(est, estId, opts);
     var taskIds = [];
     var errors = [];
     var warnings = stagingRecords.warnings || [];
@@ -552,11 +747,16 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     return lines;
   }
 
-  function getTaskStagingRecordsForEstimate(est, estId) {
+  function getTaskStagingRecordsForEstimate(est, estId, opts) {
     var recordsById = {};
     var warnings = [];
     var lines = getEstimateLineTaskContexts(est);
     var ids = [];
+
+    opts = opts || {};
+    if (opts.siteId) {
+      lines = filterLineContextsBySite(lines, opts.siteId);
+    }
 
     for (var i = 0; i < lines.length; i++) {
       for (var idIndex = 0; idIndex < lines[i].stagingIds.length; idIndex++) {
@@ -577,6 +777,16 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     }
 
     return { records: objectValues(recordsById), warnings: warnings };
+  }
+
+  function filterLineContextsBySite(lines, siteId) {
+    var filtered = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (String(lines[i].siteAssetId || '') === String(siteId || '')) {
+        filtered.push(lines[i]);
+      }
+    }
+    return filtered;
   }
 
   function getEstimateLineTaskContexts(est) {
@@ -1123,6 +1333,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   return {
     getInputData: getInputData,
     map: map,
+    reduce: reduce,
     summarize: summarize
   };
 });
