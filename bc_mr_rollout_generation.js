@@ -374,7 +374,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     setTaskField(projectTask, 'constrainttype', taskData.constrainttype);
     setTaskField(projectTask, 'duration', taskData.duration);
     setTaskField(projectTask, 'plannedwork', taskData.plannedwork);
-    setTaskField(projectTask, 'startdate', taskData.startdate);
+    setTaskField(projectTask, 'startdate', getProjectTaskStartDate(opts, taskData));
     setTaskField(projectTask, 'starttime', taskData.starttime);
     setTaskField(projectTask, 'custevent_nx_task_type', taskData.custevent_nx_task_type);
     setTaskField(projectTask, TASK.ASSET, taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET));
@@ -392,6 +392,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     setCurrentTaskAssigneeField(projectTask, TASK_ASSIGNEE.PLANNED_WORK, taskData.plannedwork || taskData.estimatedwork || taskData.duration || 0);
     setCurrentTaskAssigneeField(projectTask, TASK_ASSIGNEE.UNIT_COST, taskData.unitcost || taskData.cost || taskData.resourcecost || 0);
     projectTask.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+  }
+
+  function getProjectTaskStartDate(opts, taskData) {
+    if (!isBlankValue(taskData.startdate)) return taskData.startdate;
+    return opts.estimate.getValue(EST.PROJECT_START);
   }
 
   function createRolloutSalesOrdersFromEstimate(est, estId, sites, childProjectBySite, blockedTaskSites) {
@@ -1018,6 +1023,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   function toNumber(value, defaultValue) {
     var n = Number(value);
     return isNaN(n) ? defaultValue : n;
+  }
+
+  function isBlankValue(value) {
+    return value === null || value === undefined || String(value).trim() === '';
   }
 
   function makeProjectName(prefix, tranId) {
