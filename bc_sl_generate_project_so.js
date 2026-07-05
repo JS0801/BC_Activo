@@ -44,7 +44,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   var EST_LINE = {
     SITE_ASSET: 'custcol_nx_asset',
     STAGING_IDS: 'custcol_nscpq_proj_task_staging_ids',
-    RELATED_SALES_ORDER: 'custcol_bc_related_sales_order'
+    RELATED_SALES_ORDER: 'custcol_bc_related_sales_order',
+    TAX_CODE: 'taxcode'
   };
 
   // ---- CPQ Project Task Staging field IDs ------------------------------------
@@ -1559,6 +1560,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         setSublistIfPresent(salesOrder, 'item', 'department', i, lines[i].department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, lines[i].classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, lines[i].location);
+        setSublistIfPresent(salesOrder, 'item', EST_LINE.TAX_CODE, i, lines[i].taxCode);
         ensureSalesOrderLineAmount(salesOrder, i, lines[i]);
         salesOrder.setSublistValue({
           sublistId: 'item',
@@ -1609,7 +1611,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         amount: sourceAmount,
         department: est.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i }),
         classId: est.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i }),
-        location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i })
+        location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i }),
+        taxCode: est.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.TAX_CODE, line: i })
       };
 
       if (isKitItemType(itemType)) {
@@ -1625,7 +1628,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
             forceAmount: true,
             department: baseLine.department,
             classId: baseLine.classId,
-            location: baseLine.location
+            location: baseLine.location,
+            taxCode: baseLine.taxCode
           });
         }
       } else {
@@ -1652,6 +1656,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var department = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i });
       var classId = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i });
       var location = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i });
+      var taxCode = salesOrder.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.TAX_CODE, line: i });
       var components = getKitComponents(itemId);
       var componentLines = allocateKitComponentLines(components, quantity, sourceAmount, sourceRate);
 
@@ -1674,6 +1679,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         setSublistIfPresent(salesOrder, 'item', 'department', i, department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, location);
+        setSublistIfPresent(salesOrder, 'item', EST_LINE.TAX_CODE, i, taxCode);
         ensureSalesOrderLineAmount(salesOrder, i, {
           quantity: componentLines[c].quantity,
           rate: componentLines[c].rate,
