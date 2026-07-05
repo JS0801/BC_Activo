@@ -1600,11 +1600,13 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
       var quantity = toNumber(est.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i }), 1);
       var itemType = est.getSublistValue({ sublistId: 'item', fieldId: 'itemtype', line: i });
+      var sourceRate = est.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i });
+      var sourceAmount = est.getSublistValue({ sublistId: 'item', fieldId: 'amount', line: i });
       var baseLine = {
         itemId: itemId,
         quantity: quantity,
-        rate: est.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i }),
-        amount: est.getSublistValue({ sublistId: 'item', fieldId: 'amount', line: i }),
+        rate: sourceRate,
+        amount: sourceAmount,
         department: est.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i }),
         classId: est.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i }),
         location: est.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i })
@@ -1612,12 +1614,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
       if (isKitItemType(itemType)) {
         var components = getKitComponents(itemId);
-        for (var c = 0; c < components.length; c++) {
+        var componentLines = allocateKitComponentLines(components, quantity, sourceAmount, sourceRate);
+
+        for (var c = 0; c < componentLines.length; c++) {
           lines.push({
-            itemId: components[c].itemId,
-            quantity: quantity * components[c].quantity,
-            rate: components[c].rate,
-            amount: components[c].amount,
+            itemId: componentLines[c].itemId,
+            quantity: componentLines[c].quantity,
+            rate: componentLines[c].rate,
+            amount: componentLines[c].amount,
+            forceAmount: true,
             department: baseLine.department,
             classId: baseLine.classId,
             location: baseLine.location
@@ -1642,12 +1647,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       if (!itemId || !isKitItemType(itemType)) continue;
 
       var quantity = toNumber(salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i }), 1);
+      var sourceRate = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i });
+      var sourceAmount = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'amount', line: i });
       var department = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'department', line: i });
       var classId = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i });
       var location = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i });
       var components = getKitComponents(itemId);
+      var componentLines = allocateKitComponentLines(components, quantity, sourceAmount, sourceRate);
 
-      if (!components.length) continue;
+      if (!componentLines.length) continue;
 
       salesOrder.removeLine({
         sublistId: 'item',
@@ -1655,21 +1663,22 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         ignoreRecalc: true
       });
 
-      for (var c = components.length - 1; c >= 0; c--) {
+      for (var c = componentLines.length - 1; c >= 0; c--) {
         salesOrder.insertLine({
           sublistId: 'item',
           line: i,
           ignoreRecalc: true
         });
-        salesOrder.setSublistValue({ sublistId: 'item', fieldId: 'item', line: i, value: components[c].itemId });
-        setSublistIfPresent(salesOrder, 'item', 'quantity', i, quantity * components[c].quantity);
+        salesOrder.setSublistValue({ sublistId: 'item', fieldId: 'item', line: i, value: componentLines[c].itemId });
+        setSublistIfPresent(salesOrder, 'item', 'quantity', i, componentLines[c].quantity);
         setSublistIfPresent(salesOrder, 'item', 'department', i, department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, location);
         ensureSalesOrderLineAmount(salesOrder, i, {
-          quantity: quantity * components[c].quantity,
-          rate: components[c].rate,
-          amount: components[c].amount
+          quantity: componentLines[c].quantity,
+          rate: componentLines[c].rate,
+          amount: componentLines[c].amount,
+          forceAmount: true
         });
         salesOrder.setSublistValue({ sublistId: 'item', fieldId: SO.PROJECT, line: i, value: projectId });
       }
@@ -1705,6 +1714,43 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }
 
     return components;
+  }
+
+  function allocateKitComponentLines(components, kitQuantity, kitAmount, kitRate) {
+    var lines = [];
+    if (!components || !components.length) return lines;
+
+    var totalAmount = isBlankValue(kitAmount)
+      ? toNumber(kitRate, 0) * toNumber(kitQuantity, 1)
+      : toNumber(kitAmount, 0);
+    var totalQuantity = 0;
+
+    for (var i = 0; i < components.length; i++) {
+      totalQuantity += toNumber(kitQuantity, 1) * toNumber(components[i].quantity, 1);
+    }
+
+    if (!totalQuantity) totalQuantity = toNumber(kitQuantity, 1) || 1;
+
+    var unitRate = totalAmount / totalQuantity;
+    var allocatedTotal = 0;
+
+    for (var c = 0; c < components.length; c++) {
+      var componentQuantity = toNumber(kitQuantity, 1) * toNumber(components[c].quantity, 1);
+      var amount = c === components.length - 1
+        ? roundCurrency(totalAmount - allocatedTotal)
+        : roundCurrency(unitRate * componentQuantity);
+
+      allocatedTotal += amount;
+
+      lines.push({
+        itemId: components[c].itemId,
+        quantity: componentQuantity,
+        rate: componentQuantity ? amount / componentQuantity : 0,
+        amount: amount
+      });
+    }
+
+    return lines;
   }
 
   function createProjectTasksForEstimate(est, estId, resolveProjectId) {
@@ -2638,9 +2684,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function ensureSalesOrderLineAmount(salesOrder, line, sourceLine) {
     var currentAmount = getSublistValueSafe(salesOrder, 'item', 'amount', line);
-    if (!isBlankValue(currentAmount)) return false;
-
     sourceLine = sourceLine || {};
+    if (sourceLine.forceAmount !== true && !isBlankValue(currentAmount)) return false;
+
     var quantity = toNumber(
       getSublistValueSafe(salesOrder, 'item', 'quantity', line) || sourceLine.quantity,
       1
@@ -2688,6 +2734,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   function toNumber(value, defaultValue) {
     var n = Number(String(value === null || value === undefined ? '' : value).replace(/,/g, ''));
     return isNaN(n) ? defaultValue : n;
+  }
+
+  function roundCurrency(value) {
+    return Math.round(toNumber(value, 0) * 100) / 100;
   }
 
   function isMissing(value) {
