@@ -2877,8 +2877,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       });
     } catch (ignorePriceLevel) {}
 
-    setSublistIfPresent(salesOrder, 'item', 'rate', line, sourceRate);
-    setSublistIfPresent(salesOrder, 'item', 'amount', line, sourceAmount);
+    setSublistIfPresent(salesOrder, 'item', 'rate', line, sourceRate.toFixed(2));
+    setSublistIfPresent(salesOrder, 'item', 'amount', line, sourceAmount.toFixed(2));
     return true;
   }
 
