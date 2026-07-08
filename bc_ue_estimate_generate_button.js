@@ -69,6 +69,61 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
     });
   }
 
+  const afterSubmit = (context) => {
+    if (context.type === context.UserEventType.DELETE) {
+      return;
+    }
+
+    const newRec = context.newRecord;
+    const estimateType = newRec.getValue({ fieldId: 'custbody_bc_estimate_type' });
+    const bodyAsset = newRec.getValue({ fieldId: 'custbody_nx_asset' });
+
+    let noOfSites = 0;
+
+    if (String(estimateType) === '1') {
+      noOfSites = bodyAsset ? 1 : 0;
+    }
+
+    if (String(estimateType) === '2') {
+      const assetCountCol = search.createColumn({
+        name: 'custcol_nx_asset',
+        summary: search.Summary.COUNT,
+        label: 'Field Service Asset (trans)'
+      });
+
+      const transactionSearchObj = search.create({
+        type: 'transaction',
+        filters: [
+          ['internalid', 'anyof', newRec.id]
+        ],
+        columns: [
+          assetCountCol
+        ]
+      });
+
+      transactionSearchObj.run().each((result) => {
+        noOfSites = Number(result.getValue(assetCountCol)) || 0;
+        return false;
+      });
+    }
+
+    const currentValue = Number(newRec.getValue({ fieldId: 'custbody_no_of_sites' })) || 0;
+
+    if (currentValue !== noOfSites) {
+      record.submitFields({
+        type: newRec.type,
+        id: newRec.id,
+        values: {
+          custbody_no_of_sites: noOfSites
+        },
+        options: {
+          enableSourcing: false,
+          ignoreMandatoryFields: true
+        }
+      });
+    }
+  };
+
   function getProjectProgress(rec) {
     var estimateType = String(rec.getValue({ fieldId: FIELD.ESTIMATE_TYPE }) || '');
     var expectedProjects = getExpectedProjectCount(rec);
@@ -336,5 +391,5 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
       .replace(/'/g, '&#39;');
   }
 
-  return { beforeLoad: beforeLoad };
+  return { beforeLoad: beforeLoad, afterSubmit: afterSubmit };
 });
