@@ -260,6 +260,7 @@ define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
               (progress.savedErrorCount ? '<span>Issues: ' + progress.savedErrorCount + '</span>' : '') +
             '</div>' +
           '</div>' +
+          '<button type="button" onclick="bcRefreshInlineProjectProgress(this);" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Refresh</button>' +
           '<button type="button" onclick="bcViewProjectProgress();" style="border:1px solid #9ca3af;background:#fff;color:#1f2937;padding:5px 10px;cursor:pointer;white-space:nowrap;border-radius:4px;font-size:12px;">Show Progress</button>' +
           '<button type="button" title="Close" onclick="var el=document.getElementById(\'bc_inline_project_progress\');if(el){el.style.display=\'none\';}" style="border:1px solid #cbd5e1;background:#fff;color:#1f2937;width:24px;height:24px;cursor:pointer;border-radius:4px;font-weight:700;">x</button>' +
         '</div>' +
