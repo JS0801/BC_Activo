@@ -453,7 +453,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function buildProjectProgressPage(progress) {
     var warning = progress.statusCode === 'WARNING' ?
-      '<div class="warn">The Estimate is not marked generated, as the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
+      '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
       return '<tr>' +
         '<td>' + escapeHtml(project.id) + '</td>' +
@@ -1041,23 +1041,21 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     });
 
     if (taskResult.errors.length) {
+      var taskRollback = rollbackGeneratedProject(estId, projectId, {
+        reason: 'Standard Project Task generation failed.'
+      });
       return buildPartialFailureResult({
         estimateId: estId,
         flowType: 'STANDARD',
         expectedProjectCount: targetCount,
         expectedTaskCount: taskResult.expectedTaskCount,
-        projectIds: projectIds,
-        taskIds: taskResult.taskIds,
-        taskErrors: taskResult.errors,
-        salesOrderErrors: [makeBlockedError({
-          key: 'blocked:so:standard',
-          type: 'Blocked Sales Order',
-          label: 'Standard Sales Order',
-          message: 'Blocked until failed Project Task records are corrected and retried.',
-          blockedBy: 'Project Task'
-        })],
-        warnings: taskResult.warnings,
-        note: 'Standard Project was created, but one or more Project Tasks failed. Review the Project Task errors.'
+        projectIds: taskRollback.success ? [] : projectIds,
+        taskIds: taskRollback.success ? [] : taskResult.taskIds,
+        taskErrors: taskResult.errors.concat(taskRollback.errors),
+        warnings: (taskResult.warnings || []).concat(taskRollback.warnings),
+        note: taskRollback.success ?
+          'Standard Project Task generation failed. The related Project was rolled back.' :
+          'Standard Project Task generation failed, and rollback could not delete all generated records.'
       });
     }
 
@@ -1065,19 +1063,25 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     try {
       salesOrderResult = createStandardSalesOrderFromEstimate(estId, projectId);
     } catch (salesOrderError) {
+      var salesOrderRollback = rollbackGeneratedProject(estId, projectId, {
+        reason: 'Standard Sales Order generation failed.',
+        salesOrderId: salesOrderError.salesOrderId || ''
+      });
       return buildPartialFailureResult({
         estimateId: estId,
         flowType: 'STANDARD',
         expectedProjectCount: targetCount,
         expectedTaskCount: taskResult.expectedTaskCount,
-        projectIds: projectIds,
-        taskIds: taskResult.taskIds,
-        salesOrderIds: salesOrderError.salesOrderId ? [salesOrderError.salesOrderId] : [],
+        projectIds: salesOrderRollback.success ? [] : projectIds,
+        taskIds: salesOrderRollback.success ? [] : taskResult.taskIds,
+        salesOrderIds: salesOrderRollback.success ? [] : (salesOrderError.salesOrderId ? [salesOrderError.salesOrderId] : []),
         salesOrderErrors: [makeSalesOrderError('Standard Sales Order', salesOrderError.message || String(salesOrderError), {
           key: 'so:standard'
-        })],
-        warnings: taskResult.warnings,
-        note: 'Standard Project and Project Tasks were created, but Sales Order creation failed.'
+        })].concat(salesOrderRollback.errors),
+        warnings: (taskResult.warnings || []).concat(salesOrderRollback.warnings),
+        note: salesOrderRollback.success ?
+          'Standard Sales Order generation failed. The related Project was rolled back.' :
+          'Standard Sales Order generation failed, and rollback could not delete all generated records.'
       });
     }
 
@@ -1419,8 +1423,21 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     });
 
     var taskErrorSites = getErrorSiteMap(taskResult.errors);
-    var salesOrderResult = createRolloutSalesOrdersFromEstimate(est, estId, sites, childProjectBySite, taskErrorSites);
+    var taskRollback = rollbackSiteProjectsForErrors(estId, childProjectBySite, taskResult.errors, {
+      reason: 'Rollout Project Task generation failed.'
+    });
+    childProjectIds = removeIds(childProjectIds, taskRollback.deletedProjectIds);
+    taskResult.taskIds = removeIds(taskResult.taskIds || [], taskRollback.deletedTaskIds);
+
+    var salesOrderSites = filterSitesWithProjects(sites, childProjectBySite);
+    var salesOrderResult = createRolloutSalesOrdersFromEstimate(est, estId, salesOrderSites, childProjectBySite, taskErrorSites);
     var salesOrderErrors = salesOrderResult.errors || [];
+    var salesOrderRollback = rollbackSiteProjectsForErrors(estId, childProjectBySite, salesOrderErrors, {
+      reason: 'Rollout Sales Order generation failed.'
+    });
+    childProjectIds = removeIds(childProjectIds, salesOrderRollback.deletedProjectIds);
+    taskResult.taskIds = removeIds(taskResult.taskIds || [], salesOrderRollback.deletedTaskIds);
+    salesOrderResult.salesOrderIds = removeIds(salesOrderResult.salesOrderIds || [], salesOrderRollback.deletedSalesOrderIds);
 
     if (errors.length || taskResult.errors.length || salesOrderErrors.length) {
       var allProjectIds = parentProjectId ? [parentProjectId].concat(childProjectIds) : childProjectIds;
@@ -1435,11 +1452,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         taskIds: taskResult.taskIds,
         salesOrderIds: salesOrderResult.salesOrderIds,
         projectErrors: errors,
-        taskErrors: taskResult.errors,
-        salesOrderErrors: salesOrderErrors,
+        taskErrors: taskResult.errors.concat(taskRollback.errors),
+        salesOrderErrors: salesOrderErrors.concat(salesOrderRollback.errors),
         siteCount: sites.length,
-        warnings: taskResult.warnings,
-        note: 'Rollout generation completed with errors. Successful Projects, Project Tasks, and Sales Orders were left in place for review.'
+        warnings: (taskResult.warnings || []).concat(taskRollback.warnings).concat(salesOrderRollback.warnings),
+        note: 'Rollout generation completed with errors. Failed site child Projects were rolled back; successful sites were left in place.'
       });
     }
 
@@ -2261,7 +2278,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET)
     );
 
-    addProjectTaskAssignee(task, opts, taskData);
+   // addProjectTaskAssignee(task, opts, taskData);
 
     try {
       log.audit({
@@ -2352,25 +2369,25 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       })
     });
 
-    // task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
-    // task.setCurrentSublistValue({
-    //   sublistId: TASK_ASSIGNEE.SUBLIST,
-    //   fieldId: TASK_ASSIGNEE.RESOURCE,
-    //   value: resourceId
-    // });
+    task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+    task.setCurrentSublistValue({
+      sublistId: TASK_ASSIGNEE.SUBLIST,
+      fieldId: TASK_ASSIGNEE.RESOURCE,
+      value: resourceId
+    });
 
-    // setCurrentTaskAssigneeField(
-    //   task,
-    //   TASK_ASSIGNEE.PLANNED_WORK,
-    //   plannedWork
-    // );
-    // setCurrentTaskAssigneeField(
-    //   task,
-    //   TASK_ASSIGNEE.UNIT_COST,
-    //   unitCost
-    // );
+    setCurrentTaskAssigneeField(
+      task,
+      TASK_ASSIGNEE.PLANNED_WORK,
+      plannedWork
+    );
+    setCurrentTaskAssigneeField(
+      task,
+      TASK_ASSIGNEE.UNIT_COST,
+      unitCost
+    );
 
-    // task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+    task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
 
     log.audit({
       title: 'BC Project Task assignee line committed',
@@ -2573,6 +2590,344 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       retryable: opts.retryable !== false,
       message: opts.message || ''
     };
+  }
+
+  function rollbackSiteProjectsForErrors(estId, childProjectBySite, errors, opts) {
+    var result = {
+      deletedProjectIds: [],
+      deletedSalesOrderIds: [],
+      errors: [],
+      warnings: []
+    };
+    var siteMap = getErrorSiteMap(errors);
+
+    for (var siteId in siteMap) {
+      if (!siteMap.hasOwnProperty(siteId)) continue;
+
+      var projectId = childProjectBySite[String(siteId)];
+      if (!projectId) continue;
+
+      var rollback = rollbackGeneratedProject(estId, projectId, {
+        siteAssetId: siteId,
+        reason: opts && opts.reason ? opts.reason : 'Rollout site generation failed.'
+      });
+
+      result.errors = result.errors.concat(rollback.errors);
+      result.warnings = result.warnings.concat(rollback.warnings);
+      result.deletedSalesOrderIds = result.deletedSalesOrderIds.concat(rollback.deletedSalesOrderIds);
+
+      if (rollback.success) {
+        result.deletedProjectIds.push(projectId);
+        delete childProjectBySite[String(siteId)];
+      }
+    }
+
+    return result;
+  }
+
+  function rollbackGeneratedProject(estId, projectId, opts) {
+    opts = opts || {};
+    var result = {
+      success: true,
+      deletedProjectId: '',
+      deletedTaskIds: [],
+      deletedSalesOrderIds: [],
+      errors: [],
+      warnings: []
+    };
+
+    if (!projectId) return result;
+
+    log.audit({
+      title: 'BC Generation rollback started',
+      details: JSON.stringify({
+        estimateId: estId,
+        projectId: projectId,
+        siteAssetId: opts.siteAssetId || '',
+        reason: opts.reason || ''
+      })
+    });
+
+    var salesOrderIds = findGeneratedSalesOrderIdsForProject(estId, projectId, opts.siteAssetId);
+    if (opts.salesOrderId) addUniqueId(salesOrderIds, opts.salesOrderId);
+
+    for (var so = 0; so < salesOrderIds.length; so++) {
+      if (deleteGeneratedRecord(record.Type.SALES_ORDER, salesOrderIds[so], 'Sales Order', result)) {
+        result.deletedSalesOrderIds.push(String(salesOrderIds[so]));
+      }
+    }
+
+    clearEstimateSalesOrderLinks(estId, opts.siteAssetId, result.deletedSalesOrderIds, result);
+
+    var taskIds = findGeneratedProjectTaskIdsForProject(estId, projectId);
+    for (var t = 0; t < taskIds.length; t++) {
+      if (deleteGeneratedRecord(record.Type.PROJECT_TASK, taskIds[t], 'Project Task', result)) {
+        result.deletedTaskIds.push(String(taskIds[t]));
+      }
+    }
+
+    if (deleteGeneratedRecord(record.Type.JOB, projectId, 'Project', result)) {
+      result.deletedProjectId = String(projectId);
+      clearEstimateProjectReferenceIfMatches(estId, projectId, result);
+    }
+
+    log.audit({
+      title: 'BC Generation rollback completed',
+      details: JSON.stringify({
+        estimateId: estId,
+        projectId: projectId,
+        success: result.success,
+        deletedSalesOrderIds: result.deletedSalesOrderIds,
+        deletedTaskIds: result.deletedTaskIds,
+        deletedProjectId: result.deletedProjectId,
+        errorCount: result.errors.length
+      })
+    });
+
+    return result;
+  }
+
+  function deleteGeneratedRecord(recordType, recordId, label, result) {
+    if (!recordId) return false;
+
+    try {
+      record.delete({
+        type: recordType,
+        id: recordId
+      });
+      return true;
+    } catch (e) {
+      result.success = false;
+      result.errors.push({
+        key: 'rollback:' + String(label || 'record').toLowerCase().replace(/\s+/g, '-') + ':' + recordId,
+        type: 'Rollback',
+        label: 'Delete ' + label + ' ' + recordId,
+        retryable: false,
+        message: e.message || String(e)
+      });
+      log.error({
+        title: 'BC Generation rollback delete failed',
+        details: JSON.stringify({
+          recordType: recordType,
+          recordId: recordId,
+          label: label,
+          error: getErrorDetails(e)
+        })
+      });
+      return false;
+    }
+  }
+
+  function clearEstimateProjectReferenceIfMatches(estId, projectId, result) {
+    try {
+      var currentProjectId = search.lookupFields({
+        type: search.Type.ESTIMATE || 'estimate',
+        id: estId,
+        columns: [EST.GENERATED_PROJECT]
+      })[EST.GENERATED_PROJECT];
+
+      currentProjectId = normalizeRecordId(currentProjectId);
+      if (String(currentProjectId || '') !== String(projectId || '')) return;
+
+      var values = {};
+      values[EST.GENERATED_PROJECT] = '';
+      record.submitFields({
+        type: record.Type.ESTIMATE,
+        id: estId,
+        values: values,
+        options: {
+          enableSourcing: false,
+          ignoreMandatoryFields: true
+        }
+      });
+    } catch (e) {
+      result.success = false;
+      result.errors.push({
+        key: 'rollback:estimate-project-link:' + estId + ':' + projectId,
+        type: 'Rollback',
+        label: 'Clear Estimate Project reference',
+        retryable: false,
+        message: e.message || String(e)
+      });
+    }
+  }
+
+  function findGeneratedProjectTaskIdsForProject(estId, projectId) {
+    var ids = [];
+
+    search.create({
+      type: search.Type.PROJECT_TASK || 'projecttask',
+      filters: [
+        [TASK.SOURCE_ESTIMATE, 'anyof', estId],
+        'AND',
+        [TASK.PROJECT, 'anyof', projectId]
+      ],
+      columns: [search.createColumn({ name: 'internalid', sort: search.Sort.DESC })]
+    }).run().each(function (result) {
+      addUniqueId(ids, result.getValue({ name: 'internalid' }));
+      return true;
+    });
+
+    return ids;
+  }
+
+  function findGeneratedSalesOrderIdsForProject(estId, projectId, siteAssetId) {
+    var ids = [];
+    var existingSalesOrderId = findExistingSalesOrderForProject(estId, projectId, siteAssetId);
+    if (existingSalesOrderId) addUniqueId(ids, existingSalesOrderId);
+
+    var linkedIds = findLinkedSalesOrderIdsFromEstimateLines(estId, siteAssetId);
+    for (var i = 0; i < linkedIds.length; i++) {
+      if (salesOrderBelongsToEstimateProject(linkedIds[i], estId, projectId)) {
+        addUniqueId(ids, linkedIds[i]);
+      }
+    }
+
+    return ids;
+  }
+
+  function salesOrderBelongsToEstimateProject(salesOrderId, estId, projectId) {
+    try {
+      var salesOrder = record.load({
+        type: record.Type.SALES_ORDER,
+        id: salesOrderId,
+        isDynamic: false
+      });
+      var sourceEstimateId = String(salesOrder.getValue({ fieldId: SO.SOURCE_ESTIMATE }) || '');
+      var salesOrderProjectId = String(salesOrder.getValue({ fieldId: SO.PROJECT }) || '');
+
+      return sourceEstimateId === String(estId || '') || salesOrderProjectId === String(projectId || '');
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollback Sales Order ownership check skipped',
+        details: JSON.stringify({
+          salesOrderId: salesOrderId,
+          estimateId: estId,
+          projectId: projectId,
+          error: getErrorDetails(e)
+        })
+      });
+      return false;
+    }
+  }
+
+  function findLinkedSalesOrderIdsFromEstimateLines(estId, siteAssetId) {
+    var ids = [];
+
+    try {
+      var est = record.load({
+        type: record.Type.ESTIMATE,
+        id: estId,
+        isDynamic: false
+      });
+      var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+
+      for (var i = 0; i < lineCount; i++) {
+        if (!shouldAttachSalesOrderToEstimateLine(est, i, siteAssetId)) continue;
+        addUniqueId(ids, normalizeRecordId(est.getSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.RELATED_SALES_ORDER,
+          line: i
+        })));
+      }
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollback Estimate line Sales Order lookup skipped',
+        details: JSON.stringify({
+          estimateId: estId,
+          siteAssetId: siteAssetId || '',
+          error: getErrorDetails(e)
+        })
+      });
+    }
+
+    return ids;
+  }
+
+  function clearEstimateSalesOrderLinks(estId, siteAssetId, salesOrderIds, result) {
+    if (!salesOrderIds || !salesOrderIds.length) return;
+
+    try {
+      var est = record.load({
+        type: record.Type.ESTIMATE,
+        id: estId,
+        isDynamic: false
+      });
+      var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+      var changed = false;
+
+      for (var i = 0; i < lineCount; i++) {
+        if (!shouldAttachSalesOrderToEstimateLine(est, i, siteAssetId)) continue;
+
+        var linkedSalesOrderId = normalizeRecordId(est.getSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.RELATED_SALES_ORDER,
+          line: i
+        }));
+
+        if (!containsId(salesOrderIds, linkedSalesOrderId)) continue;
+
+        est.setSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.RELATED_SALES_ORDER,
+          line: i,
+          value: ''
+        });
+        changed = true;
+      }
+
+      if (changed) {
+        est.save({
+          enableSourcing: true,
+          ignoreMandatoryFields: true
+        });
+      }
+    } catch (e) {
+      result.success = false;
+      result.errors.push({
+        key: 'rollback:estimate-so-links:' + estId + ':' + (siteAssetId || 'all'),
+        type: 'Rollback',
+        label: 'Clear Estimate Sales Order links',
+        retryable: false,
+        message: e.message || String(e)
+      });
+    }
+  }
+
+  function filterSitesWithProjects(sites, childProjectBySite) {
+    var filtered = [];
+    for (var i = 0; i < (sites || []).length; i++) {
+      if (childProjectBySite[String(sites[i].id)]) filtered.push(sites[i]);
+    }
+    return filtered;
+  }
+
+  function removeIds(ids, idsToRemove) {
+    var removeMap = {};
+    for (var i = 0; i < (idsToRemove || []).length; i++) {
+      removeMap[String(idsToRemove[i])] = true;
+    }
+
+    var filtered = [];
+    for (var j = 0; j < (ids || []).length; j++) {
+      if (!removeMap[String(ids[j])]) filtered.push(ids[j]);
+    }
+    return filtered;
+  }
+
+  function addUniqueId(ids, id) {
+    id = normalizeRecordId(id);
+    if (!id || containsId(ids, id)) return;
+    ids.push(String(id));
+  }
+
+  function containsId(ids, id) {
+    id = String(normalizeRecordId(id) || '');
+    if (!id) return false;
+    for (var i = 0; i < (ids || []).length; i++) {
+      if (String(normalizeRecordId(ids[i]) || '') === id) return true;
+    }
+    return false;
   }
 
   function getErrorSiteMap(errors) {
