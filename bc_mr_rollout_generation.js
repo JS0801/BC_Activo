@@ -1334,14 +1334,29 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   }
 
   function updateEstimateLinesWithSalesOrder(estId, salesOrderId, siteAssetId) {
+    try {
+      return updateEstimateLinesWithSalesOrderStatic(estId, salesOrderId, siteAssetId);
+    } catch (staticError) {
+      log.error({
+        title: 'BC Rollout MR Estimate line Sales Order static link failed',
+        details: JSON.stringify({
+          estimateId: estId,
+          salesOrderId: salesOrderId,
+          siteAssetId: siteAssetId || '',
+          error: getErrorDetails(staticError)
+        })
+      });
+      return updateEstimateLinesWithSalesOrderDynamic(estId, salesOrderId, siteAssetId, staticError);
+    }
+  }
+
+  function updateEstimateLinesWithSalesOrderStatic(estId, salesOrderId, siteAssetId) {
     var est = record.load({ type: record.Type.ESTIMATE, id: estId, isDynamic: false });
     var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
     var updated = 0;
 
     for (var i = 0; i < lineCount; i++) {
-      var itemId = est.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
-      var lineSiteAssetId = est.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.SITE_ASSET, line: i });
-      if (!itemId || String(lineSiteAssetId || '') !== String(siteAssetId)) continue;
+      if (!shouldAttachSalesOrderToEstimateLine(est, i, siteAssetId)) continue;
 
       est.setSublistValue({
         sublistId: 'item',
@@ -1354,6 +1369,52 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
 
     est.save({ enableSourcing: true, ignoreMandatoryFields: true });
     return updated;
+  }
+
+  function updateEstimateLinesWithSalesOrderDynamic(estId, salesOrderId, siteAssetId, originalError) {
+    var est = record.load({ type: record.Type.ESTIMATE, id: estId, isDynamic: true });
+    var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+    var updated = 0;
+    var lineErrors = [];
+
+    for (var i = 0; i < lineCount; i++) {
+      if (!shouldAttachSalesOrderToEstimateLine(est, i, siteAssetId)) continue;
+
+      try {
+        est.selectLine({ sublistId: 'item', line: i });
+        est.setCurrentSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.RELATED_SALES_ORDER,
+          value: salesOrderId,
+          ignoreFieldChange: true
+        });
+        est.commitLine({ sublistId: 'item' });
+        updated++;
+      } catch (lineError) {
+        lineErrors.push('Line ' + (i + 1) + ': ' + (lineError.message || String(lineError)));
+      }
+    }
+
+    if (lineErrors.length) {
+      throw new Error(
+        'Sales Order ' + salesOrderId + ' was created, but Estimate line linkage failed. ' +
+        lineErrors.join(' | ') +
+        (originalError ? ' Original error: ' + (originalError.message || String(originalError)) : '')
+      );
+    }
+
+    est.save({ enableSourcing: true, ignoreMandatoryFields: true });
+    return updated;
+  }
+
+  function shouldAttachSalesOrderToEstimateLine(est, line, siteAssetId) {
+    var itemId = est.getSublistValue({ sublistId: 'item', fieldId: 'item', line: line });
+    if (!itemId) return false;
+
+    if (!siteAssetId) return true;
+
+    var lineSiteAssetId = est.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.SITE_ASSET, line: line });
+    return String(lineSiteAssetId || '') === String(siteAssetId || '');
   }
 
   function markEstimateGenerated(estId, projectId) {
@@ -1629,8 +1690,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       });
     } catch (ignorePriceLevel) {}
 
-    setSublistIfPresent(salesOrder, 'item', 'rate', line, sourceRate.toFixed(2));
-    setSublistIfPresent(salesOrder, 'item', 'amount', line, sourceAmount.toFixed(2));
+    setSublistIfPresent(salesOrder, 'item', 'rate', line, sourceRate);
+    setSublistIfPresent(salesOrder, 'item', 'amount', line, sourceAmount);
     return true;
   }
 
