@@ -453,7 +453,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function buildProjectProgressPage(progress) {
     var warning = progress.statusCode === 'WARNING' ?
-      '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
+      '<div class="warn">The Estimate is not marked generated, as the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
     var rows = progress.projects.length ? progress.projects.map(function (project) {
       return '<tr>' +
         '<td>' + escapeHtml(project.id) + '</td>' +
