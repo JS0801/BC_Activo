@@ -379,7 +379,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     var createdTasks = getCreatedProjectTaskCountForProject(estId, childProjectId);
     if (createdTasks < expectedTasks) return true;
 
-    if (!findExistingSalesOrderForProject(estId, childProjectId)) return true;
+    if (!findExistingSalesOrderForProject(estId, childProjectId, site.id)) return true;
 
     return false;
   }
@@ -785,7 +785,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   }
 
   function createRolloutSalesOrderForSite(est, estId, site, projectId) {
-    var existingSalesOrderId = findExistingSalesOrderForProject(estId, projectId);
+    var existingSalesOrderId = findExistingSalesOrderForProject(estId, projectId, site.id);
     if (existingSalesOrderId) {
       return {
         salesOrderId: existingSalesOrderId,
@@ -808,6 +808,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       setIfPresent(salesOrder, 'department', est.getValue(EST.DEPARTMENT));
       setIfPresent(salesOrder, 'class', est.getValue(EST.CLASS));
       setIfPresent(salesOrder, 'location', est.getValue(EST.LOCATION));
+      setSalesOrderExternalId(salesOrder, estId, projectId);
       salesOrder.setValue({ fieldId: SO.PROJECT, value: projectId });
       salesOrder.setValue({ fieldId: SO.SOURCE_ESTIMATE, value: estId });
 
@@ -832,6 +833,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         var wrapped = new Error('Sales Order ' + salesOrderId + ' was created, but Estimate linkage failed: ' + (e.message || String(e)));
         wrapped.salesOrderId = salesOrderId;
         throw wrapped;
+      }
+      var existingAfterError = findExistingSalesOrderForProject(estId, projectId, site.id);
+      if (existingAfterError) {
+        return {
+          salesOrderId: existingAfterError,
+          estimateLinesUpdated: updateEstimateLinesWithSalesOrder(estId, existingAfterError, site.id),
+          reused: true,
+          recoveredAfterSaveError: true
+        };
       }
       throw e;
     }
@@ -1131,8 +1141,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     return String(value || '').replace(/[^A-Za-z0-9_:-]/g, '_').substring(0, 99);
   }
 
-  function findExistingSalesOrderForProject(estId, projectId) {
+  function findExistingSalesOrderForProject(estId, projectId, siteAssetId) {
     var found = '';
+    var externalId = makeSalesOrderExternalId(estId, projectId);
+    var foundByExternalId = findExistingSalesOrderByExternalId(externalId);
+    if (foundByExternalId && ensureSalesOrderHeaderLink(foundByExternalId, estId, projectId)) {
+      return foundByExternalId;
+    }
+
     search.create({
       type: search.Type.SALES_ORDER,
       filters: [
@@ -1144,12 +1160,155 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     }).run().each(function (result) {
       var salesOrderId = result.getValue({ name: 'internalid' });
       if (salesOrderHasProject(salesOrderId, projectId)) {
+        ensureSalesOrderHeaderLink(salesOrderId, estId, projectId);
         found = salesOrderId;
         return false;
       }
       return true;
     });
+
+    if (found) return found;
+
+    return findLinkedSalesOrderFromEstimateLines(estId, projectId, siteAssetId);
+  }
+
+  function findExistingSalesOrderByExternalId(externalId) {
+    if (!externalId) return '';
+
+    var found = '';
+    try {
+      search.create({
+        type: search.Type.SALES_ORDER,
+        filters: [
+          ['externalid', 'is', externalId],
+          'AND',
+          ['mainline', 'is', 'T']
+        ],
+        columns: [search.createColumn({ name: 'internalid', sort: search.Sort.ASC })]
+      }).run().each(function (result) {
+        found = result.getValue({ name: 'internalid' });
+        return false;
+      });
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollout MR Sales Order external ID lookup skipped',
+        details: JSON.stringify({ externalId: externalId, error: getErrorDetails(e) })
+      });
+    }
+
     return found;
+  }
+
+  function findLinkedSalesOrderFromEstimateLines(estId, projectId, siteAssetId) {
+    try {
+      var est = record.load({ type: record.Type.ESTIMATE, id: estId, isDynamic: false });
+      var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+
+      for (var i = 0; i < lineCount; i++) {
+        if (siteAssetId) {
+          var lineSiteAssetId = est.getSublistValue({
+            sublistId: 'item',
+            fieldId: EST_LINE.SITE_ASSET,
+            line: i
+          });
+          if (String(lineSiteAssetId || '') !== String(siteAssetId || '')) continue;
+        }
+
+        var linkedSalesOrderId = normalizeRecordId(est.getSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.RELATED_SALES_ORDER,
+          line: i
+        }));
+
+        if (linkedSalesOrderId && ensureSalesOrderHeaderLink(linkedSalesOrderId, estId, projectId)) {
+          return linkedSalesOrderId;
+        }
+      }
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollout MR Sales Order Estimate line lookup skipped',
+        details: JSON.stringify({
+          estimateId: estId,
+          projectId: projectId,
+          siteAssetId: siteAssetId || '',
+          error: getErrorDetails(e)
+        })
+      });
+    }
+
+    return '';
+  }
+
+  function ensureSalesOrderHeaderLink(salesOrderId, estId, projectId) {
+    try {
+      var salesOrder = record.load({
+        type: record.Type.SALES_ORDER,
+        id: salesOrderId,
+        isDynamic: false
+      });
+      var existingProjectId = String(salesOrder.getValue({ fieldId: SO.PROJECT }) || '');
+      var existingEstimateId = String(salesOrder.getValue({ fieldId: SO.SOURCE_ESTIMATE }) || '');
+
+      if (existingProjectId && String(projectId || '') && existingProjectId !== String(projectId || '')) return false;
+      if (existingEstimateId && String(estId || '') && existingEstimateId !== String(estId || '')) return false;
+
+      var values = {};
+      if (!existingProjectId && projectId) values[SO.PROJECT] = projectId;
+      if (!existingEstimateId && estId) values[SO.SOURCE_ESTIMATE] = estId;
+
+      if (Object.keys(values).length) {
+        record.submitFields({
+          type: record.Type.SALES_ORDER,
+          id: salesOrderId,
+          values: values,
+          options: {
+            enableSourcing: false,
+            ignoreMandatoryFields: true
+          }
+        });
+      }
+
+      return true;
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollout MR Sales Order header link check skipped',
+        details: JSON.stringify({
+          salesOrderId: salesOrderId,
+          estimateId: estId,
+          projectId: projectId,
+          error: getErrorDetails(e)
+        })
+      });
+      return false;
+    }
+  }
+
+  function setSalesOrderExternalId(salesOrder, estId, projectId) {
+    var externalId = makeSalesOrderExternalId(estId, projectId);
+    if (!externalId) return;
+
+    try {
+      salesOrder.setValue({ fieldId: 'externalid', value: externalId });
+    } catch (e) {
+      log.audit({
+        title: 'BC Rollout MR Sales Order external ID skipped',
+        details: JSON.stringify({ externalId: externalId, error: getErrorDetails(e) })
+      });
+    }
+  }
+
+  function makeSalesOrderExternalId(estId, projectId) {
+    if (!estId || !projectId) return '';
+    return sanitizeExternalId(['BC', 'SO', 'EST', estId, 'PRJ', projectId].join('_'));
+  }
+
+  function normalizeRecordId(value) {
+    if (value === '' || value === null || value === undefined) return '';
+    if (Array.isArray(value)) return normalizeRecordId(value[0]);
+    if (typeof value === 'object') return normalizeRecordId(value.value || value.id || value.internalid || '');
+
+    var match = String(value).match(/\d+/);
+    return match ? match[0] : String(value);
   }
 
   function salesOrderHasProject(salesOrderId, projectId) {
