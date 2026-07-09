@@ -2352,25 +2352,25 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       })
     });
 
-    task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
-    task.setCurrentSublistValue({
-      sublistId: TASK_ASSIGNEE.SUBLIST,
-      fieldId: TASK_ASSIGNEE.RESOURCE,
-      value: resourceId
-    });
+    // task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+    // task.setCurrentSublistValue({
+    //   sublistId: TASK_ASSIGNEE.SUBLIST,
+    //   fieldId: TASK_ASSIGNEE.RESOURCE,
+    //   value: resourceId
+    // });
 
-    setCurrentTaskAssigneeField(
-      task,
-      TASK_ASSIGNEE.PLANNED_WORK,
-      plannedWork
-    );
-    setCurrentTaskAssigneeField(
-      task,
-      TASK_ASSIGNEE.UNIT_COST,
-      unitCost
-    );
+    // setCurrentTaskAssigneeField(
+    //   task,
+    //   TASK_ASSIGNEE.PLANNED_WORK,
+    //   plannedWork
+    // );
+    // setCurrentTaskAssigneeField(
+    //   task,
+    //   TASK_ASSIGNEE.UNIT_COST,
+    //   unitCost
+    // );
 
-    task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
+    // task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
 
     log.audit({
       title: 'BC Project Task assignee line committed',
