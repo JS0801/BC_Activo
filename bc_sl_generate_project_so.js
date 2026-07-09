@@ -173,6 +173,19 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         }
       }
     } catch (e) {
+      try {
+        persistUnhandledGenerationFailure(estId, action, e);
+      } catch (statusError) {
+        log.error({
+          title: 'BC Generation failure status update failed',
+          details: JSON.stringify({
+            estimateId: estId || '',
+            action: action || '',
+            originalError: getErrorDetails(e),
+            statusError: getErrorDetails(statusError)
+          })
+        });
+      }
       out.success = false;
       out.error = e.message || String(e);
     }
@@ -214,6 +227,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     var projects = getGeneratedProjects(estId);
     var tasks = getGeneratedProjectTasks(estId);
     var salesOrders = getGeneratedSalesOrders(estId);
+    var errorDetails = readGenerationErrorDetails(est);
+    var errorSummary = getProgressErrorSummary(errorDetails.errors);
     var created = projects.length;
     var createdTotal = projects.length + tasks.length + salesOrders.length;
     var expectedTotal = expected + expectedTasks + expectedSalesOrders;
@@ -223,7 +238,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     var salesOrderPercent = expectedSalesOrders > 0 ? Math.min(100, Math.round((salesOrders.length / expectedSalesOrders) * 100)) : 0;
     var generated = est.getValue(EST.PROJECT_GENERATED) === true;
     var generationStatus = String(est.getValue(EST.GENERATION_STATUS) || '');
-    var errorDetails = readGenerationErrorDetails(est);
     var status = getProjectProgressStatusDetails({
       expectedTotal: expectedTotal,
       createdTotal: createdTotal,
@@ -252,6 +266,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       createdSalesOrders: salesOrders.length,
       remainingSalesOrders: Math.max(expectedSalesOrders - salesOrders.length, 0),
       salesOrderPercent: salesOrderPercent,
+      taskErrorCount: errorSummary.taskErrors,
+      blockedTaskCount: errorSummary.blockedTasks,
+      salesOrderErrorCount: errorSummary.salesOrderErrors,
+      blockedSalesOrderCount: errorSummary.blockedSalesOrders,
       generated: generated,
       generationStatus: generationStatus,
       generationStatusText: getGenerationStatusLabel(generationStatus),
@@ -264,6 +282,36 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       tasks: tasks,
       salesOrders: salesOrders
     };
+  }
+
+  function getProgressErrorSummary(errors) {
+    var summary = {
+      projectErrors: 0,
+      taskErrors: 0,
+      blockedTasks: 0,
+      salesOrderErrors: 0,
+      blockedSalesOrders: 0
+    };
+
+    for (var i = 0; i < (errors || []).length; i++) {
+      var err = errors[i] || {};
+      var type = String(err.type || '').toLowerCase();
+      var key = String(err.key || '').toLowerCase();
+      var blockedBy = String(err.blockedBy || '').toLowerCase();
+      var isBlocked = type.indexOf('blocked') !== -1 || key.indexOf('blocked:') === 0 || blockedBy;
+
+      if (type.indexOf('sales order') !== -1 || key.indexOf('so:') !== -1 || key.indexOf('salesorder') !== -1) {
+        if (isBlocked) summary.blockedSalesOrders++;
+        else summary.salesOrderErrors++;
+      } else if (type.indexOf('project task') !== -1 || key.indexOf('task:') === 0) {
+        if (isBlocked) summary.blockedTasks++;
+        else summary.taskErrors++;
+      } else if (type.indexOf('project') !== -1 || key.indexOf('project:') === 0) {
+        summary.projectErrors++;
+      }
+    }
+
+    return summary;
   }
 
   function getExpectedProjectCount(est) {
@@ -396,7 +444,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       'function bcRefreshProgressSoon(delay){setTimeout(function(){window.location.href=bcProgressUrl();},delay||1000);}' +
       'function bcMarkRetryRow(button){try{var row=button&&button.closest?button.closest("tr"):null;if(row){row.className=(row.className?row.className+" ":"")+"retrying-row";}}catch(ignore){}}' +
       'function bcRestoreRetryButton(button,fallback){if(!button)return;button.disabled=false;button.textContent=button.getAttribute("data-original-text")||fallback||"Retry";}' +
-      'function bcRunRetry(action,key,button,label){label=label||"Retry";if(button){button.setAttribute("data-original-text",button.textContent);button.disabled=true;button.textContent="Retrying...";bcMarkRetryRow(button);}bcSetRetryButtons(true);bcSetRetryStatus(bcEscapeHtml(label)+" is running. Please wait.","working");var xhr=new XMLHttpRequest();xhr.open("GET",bcRetryUrl(action,key),true);xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;var result={};try{result=JSON.parse(xhr.responseText||"{}");}catch(parseError){}if(xhr.status>=200&&xhr.status<300&&result.success!==false){bcSetRetryStatus(bcEscapeHtml(label)+" finished. Refreshing progress...","success");}else{var msg=(result&&(result.error||result.message||result.note))||xhr.statusText||"Retry failed.";bcSetRetryStatus(bcEscapeHtml(label)+" finished with an error: "+bcEscapeHtml(msg)+" Refreshing progress...","error");}bcNotifyParentInlineRefresh();bcRefreshProgressSoon(1200);};xhr.onerror=function(){bcSetRetryStatus(bcEscapeHtml(label)+" could not reach the Suitelet. Please try again.","error");bcSetRetryButtons(false);bcRestoreRetryButton(button,"Retry");};xhr.send();}' +
+      'function bcRunRetry(action,key,button,label){label=label||"Retry";if(button){button.setAttribute("data-original-text",button.textContent);button.disabled=true;button.textContent="Retrying...";bcMarkRetryRow(button);}bcSetRetryButtons(true);bcSetRetryStatus(bcEscapeHtml(label)+" is running. Please wait.","working");var xhr=new XMLHttpRequest();xhr.open("GET",bcRetryUrl(action,key),true);xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;var result={};try{result=JSON.parse(xhr.responseText||"{}");}catch(parseError){}if(xhr.status>=200&&xhr.status<300&&result.success===true){bcSetRetryStatus(bcEscapeHtml(label)+" finished successfully. Refreshing progress...","success");}else if(xhr.status>=200&&xhr.status<300&&result.partial===true){bcSetRetryStatus(bcEscapeHtml(label)+" finished with remaining issues. Refreshing progress...","warning");}else{var msg=(result&&(result.error||result.message||result.note))||xhr.statusText||"Retry failed.";bcSetRetryStatus(bcEscapeHtml(label)+" finished with an error: "+bcEscapeHtml(msg)+" Refreshing progress...","error");}bcNotifyParentInlineRefresh();bcRefreshProgressSoon(1200);};xhr.onerror=function(){bcSetRetryStatus(bcEscapeHtml(label)+" could not reach the Suitelet. Please try again.","error");bcSetRetryButtons(false);bcRestoreRetryButton(button,"Retry");};xhr.send();}' +
       'function bcRetryOne(key,button){if(!key)return;bcRunRetry("retry",key,button,"Retry");}' +
       'function bcRetryAll(button){bcRunRetry("retry_all","",button,"Retry Failed / Blocked");}' +
       'function bcRetryRemaining(button){bcRunRetry("retry_remaining","",button,"Retry Remaining");}' +
@@ -414,9 +462,19 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<td>' + escapeHtml(project.site || 'Parent / No Site') + '</td>' +
       '</tr>';
     }).join('') : '<tr><td colspan="4">No generated Projects found yet.</td></tr>';
-    var taskStatus = getTaskProgressStatus(progress.expectedTasks, progress.createdTasks);
+    var taskStatus = getTaskProgressStatus(
+      progress.expectedTasks,
+      progress.createdTasks,
+      progress.taskErrorCount,
+      progress.blockedTaskCount
+    );
     var taskHierarchy = buildTaskHierarchyHtml(progress.projects, progress.tasks);
-    var salesOrderStatus = getSalesOrderProgressStatus(progress.expectedSalesOrders, progress.createdSalesOrders);
+    var salesOrderStatus = getSalesOrderProgressStatus(
+      progress.expectedSalesOrders,
+      progress.createdSalesOrders,
+      progress.salesOrderErrorCount,
+      progress.blockedSalesOrderCount
+    );
     var salesOrderRows = progress.salesOrders.length ? progress.salesOrders.map(function (salesOrder) {
       return '<tr>' +
         '<td>' + escapeHtml(salesOrder.id) + '</td>' +
@@ -465,6 +523,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       '.retry-status{display:none;margin:8px 0;padding:7px 8px;border-radius:4px;font-weight:700;}' +
       '.retry-status.working{display:block;border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;}' +
       '.retry-status.success{display:block;border:1px solid #86efac;background:#f0fdf4;color:#047857;}' +
+      '.retry-status.warning{display:block;border:1px solid #fbbf24;background:#fffbeb;color:#92400e;}' +
       '.retry-status.error{display:block;border:1px solid #fca5a5;background:#fef2f2;color:#b91c1c;}' +
       '.retrying-row{background:#eff6ff;}' +
       '</style></head><body><div class="wrap">' +
@@ -496,7 +555,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Project Source</div><div class="value">Estimate</div></div>' +
       '</div>' +
       '<h3>Project Task Progress</h3>' +
-      '<div class="bar"><div class="fill" style="background:' + getTaskBarColor(progress.expectedTasks, progress.createdTasks) + ';width:' + progress.taskPercent + '%;"></div></div>' +
+      '<div class="bar"><div class="fill" style="background:' + getTaskBarColor(progress.expectedTasks, progress.createdTasks, progress.taskErrorCount, progress.blockedTaskCount) + ';width:' + progress.taskPercent + '%;"></div></div>' +
       '<div>Project Tasks created: <strong>' + progress.createdTasks + '</strong> of <strong>' + progress.expectedTasks + '</strong> (' + progress.taskPercent + '%)</div>' +
       '<div class="summary">' +
         '<div class="box"><div class="label">Expected Tasks</div><div class="value">' + progress.expectedTasks + '</div></div>' +
@@ -506,7 +565,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Task Source</div><div class="value">CPQ</div></div>' +
       '</div>' +
       '<h3>Sales Order Progress</h3>' +
-      '<div class="bar"><div class="fill" style="background:' + getSalesOrderBarColor(progress.expectedSalesOrders, progress.createdSalesOrders) + ';width:' + progress.salesOrderPercent + '%;"></div></div>' +
+      '<div class="bar"><div class="fill" style="background:' + getSalesOrderBarColor(progress.expectedSalesOrders, progress.createdSalesOrders, progress.salesOrderErrorCount, progress.blockedSalesOrderCount) + ';width:' + progress.salesOrderPercent + '%;"></div></div>' +
       '<div>Sales Orders created: <strong>' + progress.createdSalesOrders + '</strong> of <strong>' + progress.expectedSalesOrders + '</strong> (' + progress.salesOrderPercent + '%)</div>' +
       '<div class="summary">' +
         '<div class="box"><div class="label">Expected SO</div><div class="value">' + progress.expectedSalesOrders + '</div></div>' +
@@ -625,8 +684,12 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return '<table style="margin-top:0;margin-bottom:14px;"><thead><tr><th>Task ID</th><th>Task Name</th><th>Status</th><th>Planned Work</th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
-  function getTaskProgressStatus(expected, created) {
+  function getTaskProgressStatus(expected, created, errorCount, blockedCount) {
     if (!expected) return 'No Tasks Expected';
+    if (errorCount > 0 && created > 0) return 'Partial Error';
+    if (errorCount > 0) return 'Failed';
+    if (blockedCount > 0 && created > 0) return 'Partial Error / Blocked';
+    if (blockedCount > 0) return 'Blocked';
     if (created >= expected) return 'Complete';
     if (created > 0) return 'Processing / Partial';
     return 'Not Started';
@@ -639,8 +702,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return '#94a3b8';
   }
 
-  function getTaskBarColor(expected, created) {
+  function getTaskBarColor(expected, created, errorCount, blockedCount) {
     if (!expected) return '#94a3b8';
+    if (errorCount > 0 && created === 0) return '#dc2626';
+    if (errorCount > 0 || blockedCount > 0) return '#d97706';
     if (created >= expected) return '#059669';
     if (created > 0) return '#2563eb';
     return '#94a3b8';
@@ -654,15 +719,21 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return projectsComplete && tasksComplete && salesOrdersComplete;
   }
 
-  function getSalesOrderProgressStatus(expected, created) {
+  function getSalesOrderProgressStatus(expected, created, errorCount, blockedCount) {
     if (!expected) return 'No Sales Orders Expected';
+    if (errorCount > 0 && created > 0) return 'Partial Error';
+    if (errorCount > 0) return 'Failed';
+    if (blockedCount > 0 && created > 0) return 'Partial Error / Blocked';
+    if (blockedCount > 0) return 'Blocked';
     if (created >= expected) return 'Complete';
     if (created > 0) return 'Processing / Partial';
     return 'Not Started';
   }
 
-  function getSalesOrderBarColor(expected, created) {
+  function getSalesOrderBarColor(expected, created, errorCount, blockedCount) {
     if (!expected) return '#94a3b8';
+    if (errorCount > 0 && created === 0) return '#dc2626';
+    if (errorCount > 0 || blockedCount > 0) return '#d97706';
     if (created >= expected) return '#059669';
     if (created > 0) return '#2563eb';
     return '#94a3b8';
@@ -777,6 +848,53 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         warnings: warnings || []
       }
     });
+  }
+
+  function persistUnhandledGenerationFailure(estId, action, error) {
+    if (!estId || action === 'progress' || action === 'inline_progress') return;
+
+    var est = record.load({
+      type: record.Type.ESTIMATE,
+      id: estId,
+      isDynamic: false
+    });
+    var currentStatus = String(est.getValue(EST.GENERATION_STATUS) || '');
+
+    if (!isActiveGenerationStatus(currentStatus)) return;
+
+    var detail = readGenerationErrorDetails(est);
+    var errors = (detail.errors || []).slice();
+    errors.push({
+      key: 'generation:unhandled:' + new Date().getTime(),
+      type: 'Generation',
+      label: getGenerationActionLabel(action),
+      retryable: true,
+      message: error && error.message ? error.message : String(error)
+    });
+
+    var anyCreated = getGeneratedProjects(estId).length > 0 ||
+      getGeneratedProjectTasks(estId).length > 0 ||
+      getGeneratedSalesOrders(estId).length > 0;
+
+    persistGenerationErrors(
+      estId,
+      errors,
+      detail.warnings || [],
+      anyCreated ? GEN_STATUS.PARTIAL_ERROR : GEN_STATUS.FAILED
+    );
+  }
+
+  function isActiveGenerationStatus(status) {
+    return status === GEN_STATUS.PROCESSING ||
+      status === GEN_STATUS.PENDING ||
+      status === GEN_STATUS.RETRY_PENDING;
+  }
+
+  function getGenerationActionLabel(action) {
+    if (action === 'retry') return 'Retry';
+    if (action === 'retry_all') return 'Retry Failed / Blocked';
+    if (action === 'retry_remaining') return 'Retry Remaining';
+    return 'Generate Project / Sales Order';
   }
 
   function clearGenerationErrors(estId, projectId) {
