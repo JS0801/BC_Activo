@@ -1460,7 +1460,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     if (opts.errorDetails !== undefined) values[EST.ERROR_DETAILS] = opts.errorDetails ? JSON.stringify(opts.errorDetails) : '';
 
     record.submitFields({
-      type: record.Type.ESTIMATE,
+      type: 'estimate',
       id: estId,
       values: values,
       options: { enableSourcing: false, ignoreMandatoryFields: true }
