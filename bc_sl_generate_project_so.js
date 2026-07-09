@@ -385,6 +385,24 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return salesOrders;
   }
 
+  function buildProjectProgressClientScript() {
+    return '<script>' +
+      'function bcEscapeHtml(value){return String(value||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\\x27/g,"&#39;");}' +
+      'function bcSetRetryStatus(message,state){var el=document.getElementById("bc_retry_status");if(!el)return;el.className="retry-status "+(state||"working");el.innerHTML=message;}' +
+      'function bcSetRetryButtons(disabled){var buttons=document.querySelectorAll("[data-retry-button=\\"T\\"]");for(var i=0;i<buttons.length;i++){buttons[i].disabled=disabled;}}' +
+      'function bcProgressUrl(){var u=new URL(window.location.href);u.searchParams.set("action","progress");u.searchParams.delete("format");u.searchParams.delete("key");u.searchParams.delete("_ts");return u.toString();}' +
+      'function bcRetryUrl(action,key){var u=new URL(window.location.href);u.searchParams.set("action",action);u.searchParams.set("format","json");u.searchParams.set("_ts",String(new Date().getTime()));if(key){u.searchParams.set("key",key);}else{u.searchParams.delete("key");}return u.toString();}' +
+      'function bcNotifyParentInlineRefresh(){try{if(window.parent&&window.parent!==window&&typeof window.parent.bcRefreshInlineProjectProgress==="function"){window.parent.bcRefreshInlineProjectProgress();}}catch(ignore){}}' +
+      'function bcRefreshProgressSoon(delay){setTimeout(function(){window.location.href=bcProgressUrl();},delay||1000);}' +
+      'function bcMarkRetryRow(button){try{var row=button&&button.closest?button.closest("tr"):null;if(row){row.className=(row.className?row.className+" ":"")+"retrying-row";}}catch(ignore){}}' +
+      'function bcRestoreRetryButton(button,fallback){if(!button)return;button.disabled=false;button.textContent=button.getAttribute("data-original-text")||fallback||"Retry";}' +
+      'function bcRunRetry(action,key,button,label){label=label||"Retry";if(button){button.setAttribute("data-original-text",button.textContent);button.disabled=true;button.textContent="Retrying...";bcMarkRetryRow(button);}bcSetRetryButtons(true);bcSetRetryStatus(bcEscapeHtml(label)+" is running. Please wait.","working");var xhr=new XMLHttpRequest();xhr.open("GET",bcRetryUrl(action,key),true);xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;var result={};try{result=JSON.parse(xhr.responseText||"{}");}catch(parseError){}if(xhr.status>=200&&xhr.status<300&&result.success!==false){bcSetRetryStatus(bcEscapeHtml(label)+" finished. Refreshing progress...","success");}else{var msg=(result&&(result.error||result.message||result.note))||xhr.statusText||"Retry failed.";bcSetRetryStatus(bcEscapeHtml(label)+" finished with an error: "+bcEscapeHtml(msg)+" Refreshing progress...","error");}bcNotifyParentInlineRefresh();bcRefreshProgressSoon(1200);};xhr.onerror=function(){bcSetRetryStatus(bcEscapeHtml(label)+" could not reach the Suitelet. Please try again.","error");bcSetRetryButtons(false);bcRestoreRetryButton(button,"Retry");};xhr.send();}' +
+      'function bcRetryOne(key,button){if(!key)return;bcRunRetry("retry",key,button,"Retry");}' +
+      'function bcRetryAll(button){bcRunRetry("retry_all","",button,"Retry Failed / Blocked");}' +
+      'function bcRetryRemaining(button){bcRunRetry("retry_remaining","",button,"Retry Remaining");}' +
+      '</script>';
+  }
+
   function buildProjectProgressPage(progress) {
     var warning = progress.statusCode === 'WARNING' ?
       '<div class="warn">The Estimate is marked generated, but the generated record count does not match the expected count. Review the generated records before re-running.</div>' : '';
@@ -412,13 +430,15 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<td>' + escapeHtml(err.label || '') + '</td>' +
         '<td>' + escapeHtml(err.siteText || err.siteId || (err.lineRef ? 'Line ' + err.lineRef : '')) + '</td>' +
         '<td>' + escapeHtml(err.message || '') + '</td>' +
-        '<td>' + (err.retryable === false ? '<span class="muted">Blocked</span>' : '<button type="button" class="mini" onclick="bcRetryOne(\'' + escapeJs(err.key || '') + '\')">Retry</button>') + '</td>' +
+        '<td>' + (err.retryable === false ? '<span class="muted">Blocked</span>' : '<button type="button" class="mini" data-retry-button="T" onclick="bcRetryOne(\'' + escapeJs(err.key || '') + '\', this)">Retry</button>') + '</td>' +
       '</tr>';
     }).join('') : '<tr><td colspan="5">No saved errors found.</td></tr>';
     var retryAllButton = progress.errors.length ?
-      '<button type="button" class="primary" onclick="bcRetryAll()">Retry Failed / Blocked</button>' : '';
+      '<button type="button" class="primary" data-retry-button="T" onclick="bcRetryAll(this)">Retry Failed / Blocked</button>' : '';
     var retryRemainingButton = shouldShowRetryRemaining(progress) ?
-      '<button type="button" class="primary secondary-action" onclick="bcRetryRemaining()">Retry Remaining</button>' : '';
+      '<button type="button" class="primary secondary-action" data-retry-button="T" onclick="bcRetryRemaining(this)">Retry Remaining</button>' : '';
+    var retryStatus = progress.errors.length || shouldShowRetryRemaining(progress) ?
+      '<div id="bc_retry_status" class="retry-status idle"></div>' : '';
 
     return '<!doctype html>' +
       '<html><head><title>Project Progress</title>' +
@@ -439,14 +459,16 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       '.actions{display:flex;justify-content:flex-end;gap:8px;margin:8px 0;}' +
       '.primary,.mini{border:1px solid #2563eb;background:#2563eb;color:#fff;padding:5px 9px;border-radius:4px;cursor:pointer;font-size:12px;}' +
       '.secondary-action{background:#fff;color:#2563eb;}' +
+      '.primary:disabled,.mini:disabled{opacity:.68;cursor:wait;}' +
       '.mini{padding:3px 7px;font-size:11px;}' +
       '.muted{color:#6b7280;font-size:11px;}' +
+      '.retry-status{display:none;margin:8px 0;padding:7px 8px;border-radius:4px;font-weight:700;}' +
+      '.retry-status.working{display:block;border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;}' +
+      '.retry-status.success{display:block;border:1px solid #86efac;background:#f0fdf4;color:#047857;}' +
+      '.retry-status.error{display:block;border:1px solid #fca5a5;background:#fef2f2;color:#b91c1c;}' +
+      '.retrying-row{background:#eff6ff;}' +
       '</style></head><body><div class="wrap">' +
-      '<script>' +
-      'function bcRetryOne(key){if(!key)return;var u=new URL(window.location.href);u.searchParams.set("action","retry");u.searchParams.set("key",key);window.location.href=u.toString();}' +
-      'function bcRetryAll(){var u=new URL(window.location.href);u.searchParams.set("action","retry_all");u.searchParams.delete("key");window.location.href=u.toString();}' +
-      'function bcRetryRemaining(){var u=new URL(window.location.href);u.searchParams.set("action","retry_remaining");u.searchParams.delete("key");window.location.href=u.toString();}' +
-      '</script>' +
+      buildProjectProgressClientScript() +
       '<h2>Generation Progress</h2>' +
       '<div>Estimate: ' + escapeHtml(progress.estimateTranId || progress.estimateId) + '</div>' +
       '<div class="bar"><div class="fill"></div></div>' +
@@ -461,6 +483,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Status</div><div class="value">' + escapeHtml(progress.statusText) + '</div></div>' +
       '</div>' +
       '<div class="actions">' + retryRemainingButton + retryAllButton + '</div>' +
+      retryStatus +
       '<h3>Saved Errors / Blockers</h3>' +
       '<table><thead><tr><th>Type</th><th>Attempt</th><th>Site / Line</th><th>Message</th><th>Action</th></tr></thead><tbody>' + errorRows + '</tbody></table>' +
       '<h3>Project Progress</h3>' +
