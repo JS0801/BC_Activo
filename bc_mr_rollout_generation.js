@@ -641,7 +641,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     setTaskField(projectTask, 'starttime', taskData.starttime);
     setTaskField(projectTask, 'custevent_nx_task_type', taskData.custevent_nx_task_type);
     setTaskField(projectTask, TASK.ASSET, taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET));
-    addProjectTaskAssignee(projectTask, opts, taskData);
+   // addProjectTaskAssignee(projectTask, opts, taskData);
 
     return projectTask.save({ enableSourcing: true, ignoreMandatoryFields: true });
   }
