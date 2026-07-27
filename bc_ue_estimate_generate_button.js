@@ -9,7 +9,7 @@
  *
  * Owner: BlueCollar (Tom F.)
  */
-define(['N/search', 'N/ui/serverWidget'], function (search, serverWidget) {
+define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWidget, record) {
 
   // ---- Config constants (confirm during dev) -------------------------------
   var FIELD = {
