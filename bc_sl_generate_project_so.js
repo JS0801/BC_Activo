@@ -45,7 +45,31 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     SITE_ASSET: 'custcol_nx_asset',
     STAGING_IDS: 'custcol_nscpq_proj_task_staging_ids',
     RELATED_SALES_ORDER: 'custcol_bc_related_sales_order',
+    CPQ_KIT_JSON: 'custcol_nscpq_trx_kit_json',
     TAX_CODE: 'taxcode'
+  };
+
+  var SO_LINE_JSON_FIELD = {
+    HOURS: 'custcol_bc_hours',
+    NUM_RUNS: 'custcol_bc_no_of_runs',
+    AVG_RUN_LENGTH: 'custcol_bc_avg_run_length',
+    UNIT_COST: 'custcol_bc_unit_cost',
+    EXTENDED_COST: 'custcol_bc_extended_cost',
+    GROSS_MARGIN: 'custcol_bc_gross_margin'
+  };
+
+  var CPQ_UOM_BY_NAME = {
+    each: '2',
+    ea: '2',
+    hour: '3',
+    hours: '3',
+    hr: '3',
+    meter: '1',
+    meters: '1',
+    metre: '1',
+    metres: '1',
+    mtr: '1',
+    revenue: '4'
   };
 
   // ---- CPQ Project Task Staging field IDs ------------------------------------
@@ -1558,6 +1582,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         })
       });
 
+      var estimateLineCpqJsonByLine = getEstimateLineCpqJsonByLine(estId);
       var salesOrder = record.transform({
         fromType: record.Type.ESTIMATE,
         fromId: estId,
@@ -1570,7 +1595,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       salesOrder.setValue({ fieldId: SO.SOURCE_ESTIMATE, value: estId });
 
       var lineCount = salesOrder.getLineCount({ sublistId: 'item' }) || 0;
-      var expandedKitCount = expandKitLinesOnSalesOrder(salesOrder, projectId);
+      var expandedKitCount = expandKitLinesOnSalesOrder(salesOrder, projectId, estimateLineCpqJsonByLine);
       var lineProjectCount = setSalesOrderLineProjects(salesOrder, projectId);
 
       log.audit({
@@ -1899,12 +1924,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           line: i,
           value: lines[i].itemId
         });
+        setSublistIfPresent(salesOrder, 'item', 'units', i, lines[i].units);
         setSublistIfPresent(salesOrder, 'item', 'quantity', i, lines[i].quantity);
         setSublistIfPresent(salesOrder, 'item', 'department', i, lines[i].department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, lines[i].classId);
         setSublistIfPresent(salesOrder, 'item', 'location', i, lines[i].location);
         setSublistIfPresent(salesOrder, 'item', EST_LINE.TAX_CODE, i, lines[i].taxCode);
         ensureSalesOrderLineAmount(salesOrder, i, lines[i]);
+        applyCpqJsonColumnsToSalesOrderLine(salesOrder, i, lines[i]);
         salesOrder.setSublistValue({
           sublistId: 'item',
           fieldId: SO.PROJECT,
@@ -1957,6 +1984,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var itemType = est.getSublistValue({ sublistId: 'item', fieldId: 'itemtype', line: i });
       var sourceRate = est.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i });
       var sourceAmount = est.getSublistValue({ sublistId: 'item', fieldId: 'amount', line: i });
+      var cpqKitJson = est.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.CPQ_KIT_JSON, line: i });
       var baseLine = {
         itemId: itemId,
         quantity: quantity,
@@ -1969,8 +1997,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       };
 
       if (isKitItemType(itemType)) {
-        var components = getKitComponents(itemId);
-        var componentLines = allocateKitComponentLines(components, quantity, sourceAmount, sourceRate);
+        var componentLines = cpqKitJson ?
+          buildCpqKitComponentLines(cpqKitJson, 'Estimate line ' + (i + 1)) :
+          allocateKitComponentLines(getKitComponents(itemId), quantity, sourceAmount, sourceRate);
 
         for (var c = 0; c < componentLines.length; c++) {
           lines.push({
@@ -1978,6 +2007,13 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
             quantity: componentLines[c].quantity,
             rate: componentLines[c].rate,
             amount: componentLines[c].amount,
+            units: componentLines[c].units,
+            hours: componentLines[c].hours,
+            numRuns: componentLines[c].numRuns,
+            avgRunLength: componentLines[c].avgRunLength,
+            unitCost: componentLines[c].unitCost,
+            extendedCost: componentLines[c].extendedCost,
+            grossMargin: componentLines[c].grossMargin,
             forceAmount: true,
             department: baseLine.department,
             classId: baseLine.classId,
@@ -1986,6 +2022,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           });
         }
       } else {
+        if (cpqKitJson) {
+          mergeCpqSingleLineDetails(baseLine, cpqKitJson, 'Estimate line ' + (i + 1));
+        }
         lines.push(baseLine);
       }
     }
@@ -1993,15 +2032,30 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return lines;
   }
 
-  function expandKitLinesOnSalesOrder(salesOrder, projectId) {
+  function expandKitLinesOnSalesOrder(salesOrder, projectId, estimateLineCpqJsonByLine) {
     var expanded = 0;
     var lineCount = salesOrder.getLineCount({ sublistId: 'item' }) || 0;
+    estimateLineCpqJsonByLine = estimateLineCpqJsonByLine || {};
 
     for (var i = lineCount - 1; i >= 0; i--) {
       var itemId = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
       var itemType = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'itemtype', line: i });
+      var cpqKitJson = getSublistValueSafe(salesOrder, 'item', EST_LINE.CPQ_KIT_JSON, i) ||
+        estimateLineCpqJsonByLine[i] ||
+        '';
 
-      if (!itemId || !isKitItemType(itemType)) continue;
+      if (!itemId) continue;
+
+      if (!isKitItemType(itemType)) {
+        if (cpqKitJson) {
+          var nonKitLineDetails = {
+            itemId: itemId
+          };
+          mergeCpqSingleLineDetails(nonKitLineDetails, cpqKitJson, 'Sales Order transformed line ' + (i + 1));
+          applyCpqJsonColumnsToSalesOrderLine(salesOrder, i, nonKitLineDetails);
+        }
+        continue;
+      }
 
       var quantity = toNumber(salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i }), 1);
       var sourceRate = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'rate', line: i });
@@ -2010,8 +2064,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var classId = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'class', line: i });
       var location = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i });
       var taxCode = salesOrder.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.TAX_CODE, line: i });
-      var components = getKitComponents(itemId);
-      var componentLines = allocateKitComponentLines(components, quantity, sourceAmount, sourceRate);
+      var componentLines = cpqKitJson ?
+        buildCpqKitComponentLines(cpqKitJson, 'Sales Order transformed line ' + (i + 1)) :
+        allocateKitComponentLines(getKitComponents(itemId), quantity, sourceAmount, sourceRate);
 
       if (!componentLines.length) continue;
 
@@ -2028,6 +2083,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           ignoreRecalc: true
         });
         salesOrder.setSublistValue({ sublistId: 'item', fieldId: 'item', line: i, value: componentLines[c].itemId });
+        setSublistIfPresent(salesOrder, 'item', 'units', i, componentLines[c].units);
         setSublistIfPresent(salesOrder, 'item', 'quantity', i, componentLines[c].quantity);
         setSublistIfPresent(salesOrder, 'item', 'department', i, department);
         setSublistIfPresent(salesOrder, 'item', 'class', i, classId);
@@ -2039,6 +2095,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           amount: componentLines[c].amount,
           forceAmount: true
         });
+        applyCpqJsonColumnsToSalesOrderLine(salesOrder, i, componentLines[c]);
         salesOrder.setSublistValue({ sublistId: 'item', fieldId: SO.PROJECT, line: i, value: projectId });
       }
 
@@ -2046,6 +2103,38 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }
 
     return expanded;
+  }
+
+  function getEstimateLineCpqJsonByLine(estId) {
+    var map = {};
+
+    try {
+      var est = record.load({
+        type: record.Type.ESTIMATE,
+        id: estId,
+        isDynamic: false
+      });
+      var lineCount = est.getLineCount({ sublistId: 'item' }) || 0;
+
+      for (var i = 0; i < lineCount; i++) {
+        map[i] = est.getSublistValue({
+          sublistId: 'item',
+          fieldId: EST_LINE.CPQ_KIT_JSON,
+          line: i
+        }) || '';
+      }
+    } catch (e) {
+      log.error({
+        title: 'BC Estimate CPQ kit JSON lookup failed',
+        details: JSON.stringify({
+          estimateId: estId,
+          error: getErrorDetails(e)
+        })
+      });
+      throw e;
+    }
+
+    return map;
   }
 
   function isKitItemType(itemType) {
@@ -2110,6 +2199,113 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     }
 
     return lines;
+  }
+
+  function buildCpqKitComponentLines(jsonText, contextLabel) {
+    var entries = parseCpqKitJsonEntries(jsonText, contextLabel);
+    if (!entries.length) throw new Error(contextLabel + ': CPQ kit JSON does not contain any component lines.');
+
+    var lines = [];
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      var itemId = normalizeRecordId(entry.itemId);
+      if (!itemId) throw new Error(contextLabel + ': CPQ kit JSON component is missing the item internal ID.');
+
+      lines.push({
+        itemId: itemId,
+        quantity: requireCpqNumber(entry.data.qty, contextLabel + ' component ' + itemId + ' qty'),
+        rate: requireCpqNumber(entry.data.matSellUnit, contextLabel + ' component ' + itemId + ' matSellUnit'),
+        amount: requireCpqNumber(entry.data.extMatSell, contextLabel + ' component ' + itemId + ' extMatSell'),
+        units: getCpqUnitValue(entry.data.uom, contextLabel + ' component ' + itemId),
+        hours: entry.data.hrs,
+        numRuns: entry.data.numRuns,
+        avgRunLength: entry.data.avgRunLength,
+        unitCost: entry.data.cost,
+        extendedCost: entry.data.extMatCost,
+        grossMargin: entry.data.grossMgn,
+        forceAmount: true
+      });
+    }
+
+    return lines;
+  }
+
+  function mergeCpqSingleLineDetails(line, jsonText, contextLabel) {
+    var entries = parseCpqKitJsonEntries(jsonText, contextLabel);
+    if (entries.length !== 1) {
+      throw new Error(contextLabel + ': CPQ JSON for a non-kit item must contain exactly one line detail object.');
+    }
+
+    var data = entries[0].data;
+    line.units = getCpqUnitValue(data.uom, contextLabel);
+    line.hours = data.hrs;
+    line.numRuns = data.numRuns;
+    line.avgRunLength = data.avgRunLength;
+    line.unitCost = data.cost;
+    line.extendedCost = data.extMatCost;
+    line.grossMargin = data.grossMgn;
+    return line;
+  }
+
+  function parseCpqKitJsonEntries(jsonText, contextLabel) {
+    var parsed;
+    try {
+      parsed = JSON.parse(String(jsonText || ''));
+    } catch (e) {
+      throw new Error(contextLabel + ': CPQ kit JSON is invalid. ' + (e.message || String(e)));
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(contextLabel + ': CPQ kit JSON must be an object keyed by item internal ID.');
+    }
+
+    var entries = [];
+    for (var itemId in parsed) {
+      if (!parsed.hasOwnProperty(itemId)) continue;
+      if (!parsed[itemId] || typeof parsed[itemId] !== 'object' || Array.isArray(parsed[itemId])) {
+        throw new Error(contextLabel + ': CPQ kit JSON component ' + itemId + ' must be an object.');
+      }
+      entries.push({
+        itemId: itemId,
+        data: parsed[itemId]
+      });
+    }
+
+    return entries;
+  }
+
+  function applyCpqJsonColumnsToSalesOrderLine(salesOrder, line, sourceLine) {
+    sourceLine = sourceLine || {};
+
+    setSublistIfPresent(salesOrder, 'item', 'units', line, sourceLine.units);
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.HOURS, line, sourceLine.hours);
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.NUM_RUNS, line, normalizeBooleanLikeJsonValue(sourceLine.numRuns));
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.AVG_RUN_LENGTH, line, normalizeBooleanLikeJsonValue(sourceLine.avgRunLength));
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.UNIT_COST, line, sourceLine.unitCost);
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.EXTENDED_COST, line, sourceLine.extendedCost);
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.GROSS_MARGIN, line, sourceLine.grossMargin);
+  }
+
+  function requireCpqNumber(value, label) {
+    if (isBlankValue(value) || value === false) throw new Error(label + ' is missing.');
+
+    var num = toNumber(value, null);
+    if (num === null || isNaN(num)) throw new Error(label + ' is not a valid number.');
+    return num;
+  }
+
+  function getCpqUnitValue(value, contextLabel) {
+    if (isBlankValue(value) || value === false) return '';
+    if (/^\d+$/.test(String(value))) return String(value);
+
+    var key = String(value).toLowerCase().trim();
+    var unitId = CPQ_UOM_BY_NAME[key];
+    if (!unitId) throw new Error(contextLabel + ': CPQ UOM "' + value + '" is not mapped to a NetSuite unit.');
+    return unitId;
+  }
+
+  function normalizeBooleanLikeJsonValue(value) {
+    return value === false ? '' : value;
   }
 
   function createProjectTasksForEstimate(est, estId, resolveProjectId) {
