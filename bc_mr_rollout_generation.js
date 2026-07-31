@@ -2196,12 +2196,17 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   }
 
   function parseCpqKitJsonEntries(jsonText, contextLabel) {
-    var parsed;
-    try {
-      parsed = JSON.parse(String(jsonText || ''));
-    } catch (e) {
-      throw new Error(contextLabel + ': CPQ kit JSON is invalid. ' + (e.message || String(e)));
-    }
+var parsed;
+
+if (jsonText && typeof jsonText === 'object') {
+  parsed = jsonText;
+} else {
+  try {
+    parsed = JSON.parse(String(jsonText || ''));
+  } catch (e) {
+    throw new Error(contextLabel + ': CPQ kit JSON is invalid. ' + (e.message || String(e)));
+  }
+}
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error(contextLabel + ': CPQ kit JSON must be an object keyed by item internal ID.');
@@ -2256,12 +2261,21 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     return value === false ? '' : value;
   }
 
-  function parseTaskJson(jsonText, stagingId) {
-    if (!jsonText) throw new Error('Task JSON is blank on staging record ' + stagingId + '.');
-    var parsed = JSON.parse(jsonText);
-    return Array.isArray(parsed) ? parsed : [parsed];
+function parseTaskJson(jsonText, stagingId) {
+  if (jsonText === null || jsonText === undefined || jsonText === '') {
+    throw new Error('Task JSON is blank on staging record ' + stagingId + '.');
   }
 
+  var parsed;
+
+  if (jsonText && typeof jsonText === 'object') {
+    parsed = jsonText;
+  } else {
+    parsed = JSON.parse(String(jsonText));
+  }
+
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
   function makeTaskError(staging, taskData, message) {
     return {
       key: 'task:staging:' + staging.id + ':index:' + (taskData && taskData.__bcTaskIndex ? taskData.__bcTaskIndex : 'json'),
