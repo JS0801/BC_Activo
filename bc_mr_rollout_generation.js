@@ -1498,7 +1498,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'],
     if (opts.projectId !== undefined && opts.projectId !== null && opts.projectId !== '') values[EST.GENERATED_PROJECT] = opts.projectId;
     if (opts.generated !== undefined) values[EST.PROJECT_GENERATED] = opts.generated === true;
     if (opts.errorDetails !== undefined) values[EST.ERROR_DETAILS] = opts.errorDetails ? JSON.stringify(opts.errorDetails) : '';
-
+    log.debug('values', values)
     record.submitFields({
       type: 'estimate',
       id: estId,
