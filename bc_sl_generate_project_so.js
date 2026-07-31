@@ -89,13 +89,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     ASSET: 'custevent_nx_task_asset'
   };
 
-  var TASK_ASSIGNEE = {
-    SUBLIST: 'assignee',
-    RESOURCE: 'resource',
-    PLANNED_WORK: 'plannedwork',
-    UNIT_COST: 'unitcost'
-  };
-
   // ---- Project field IDs ---------------------------------------------------
   var PROJ = {
     NAME: 'companyname',
@@ -129,7 +122,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   var ROLLOUT_ASYNC_SITE_THRESHOLD = 10;
   var ROLLOUT_MR_SCRIPT_ID = 'customscript_bc_mr_rollout_generation';
   var ROLLOUT_MR_DEPLOY_NOW = 'customdeploy_bc_mr_rollout_gen_now';
-  var ROLLOUT_MR_DEPLOY_SCHED = 'customdeploy_bc_mr_rollout_gen_sched';
   var MR_PARAM_ESTIMATE_ID = 'custscript_bc_rollout_estimate_id';
 
   var GEN_STATUS = {
@@ -149,10 +141,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     '5': 'Partial Error',
     '6': 'Retry Pending'
   };
-
-  // SANDBOX TEST ONLY: set to false before moving beyond progress-bar testing.
-  var PROGRESS_TEST_MODE = false;
-  var PROGRESS_TEST_STANDARD_PROJECT_COUNT = 10;
 
   function onRequest(ctx) {
     var out = { success: false };
@@ -343,7 +331,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
-      return PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
+      return 1;
     }
 
     if (estimateType === ESTIMATE_TYPE_ROLLOUT) {
@@ -736,14 +724,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return '#94a3b8';
   }
 
-  function isOverallProgressComplete(progress) {
-    var projectsComplete = progress.expected > 0 && progress.created >= progress.expected;
-    var tasksComplete = progress.expectedTasks === 0 || progress.createdTasks >= progress.expectedTasks;
-    var salesOrdersComplete = progress.expectedSalesOrders === 0 || progress.createdSalesOrders >= progress.expectedSalesOrders;
-
-    return projectsComplete && tasksComplete && salesOrdersComplete;
-  }
-
   function getSalesOrderProgressStatus(expected, created, errorCount, blockedCount) {
     if (!expected) return 'No Sales Orders Expected';
     if (errorCount > 0 && created > 0) return 'Partial Error';
@@ -993,7 +973,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       throw new Error('Project already generated for this estimate.');
     }
 
-    if (!opts.allowExistingGeneratedRecords && !PROGRESS_TEST_MODE && hasExistingGeneratedProjects(estId)) {
+    if (!opts.allowExistingGeneratedRecords && hasExistingGeneratedProjects(estId)) {
       throw new Error('Project records already exist for this estimate. Delete or review them before re-running.');
     }
 
@@ -1098,7 +1078,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function runStandardGenerationFlow(est, estId, opts) {
     opts = opts || {};
-    var targetCount = PROGRESS_TEST_MODE ? PROGRESS_TEST_STANDARD_PROJECT_COUNT : 1;
     var projectIds = [];
     var errors = [];
     var projectId = findExistingStandardProject(estId);
@@ -1106,30 +1085,27 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     if (projectId) {
       projectIds.push(projectId);
     } else {
-      for (var i = 0; i < targetCount; i++) {
-        var attempt = {
-          estimate: est,
-          estimateId: estId,
-          parentId: est.getValue(EST.ENTITY),
-          siteAssetId: est.getValue(EST.SITE_ASSET),
-          namePrefix: targetCount > 1 ? 'Progress Test Project ' + padNumber(i + 1) : 'Project',
-          attemptLabel: targetCount > 1 ? 'Standard Project ' + padNumber(i + 1) : 'Standard Project',
-          errorType: 'Project',
-          errorKey: 'project:standard'
-        };
+      var result = tryCreateProject({
+        estimate: est,
+        estimateId: estId,
+        parentId: est.getValue(EST.ENTITY),
+        siteAssetId: est.getValue(EST.SITE_ASSET),
+        namePrefix: 'Project',
+        attemptLabel: 'Standard Project',
+        errorType: 'Project',
+        errorKey: 'project:standard'
+      });
 
-        var result = tryCreateProject(attempt);
-        if (result.projectId) projectIds.push(result.projectId);
-        if (result.projectId && !projectId) projectId = result.projectId;
-        if (result.error) errors.push(result.error);
-      }
+      if (result.projectId) projectIds.push(result.projectId);
+      if (result.projectId) projectId = result.projectId;
+      if (result.error) errors.push(result.error);
     }
 
     if (errors.length) {
       return buildPartialFailureResult({
         estimateId: estId,
         flowType: 'STANDARD',
-        expectedProjectCount: targetCount,
+        expectedProjectCount: 1,
         projectIds: projectIds,
         projectErrors: errors,
         note: 'Standard Project generation completed with errors. Review the failed attempts, fix the data, and re-run as needed.'
@@ -1147,7 +1123,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       return buildPartialFailureResult({
         estimateId: estId,
         flowType: 'STANDARD',
-        expectedProjectCount: targetCount,
+        expectedProjectCount: 1,
         expectedTaskCount: taskResult.expectedTaskCount,
         projectIds: taskRollback.success ? [] : projectIds,
         taskIds: taskRollback.success ? [] : taskResult.taskIds,
@@ -1170,7 +1146,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       return buildPartialFailureResult({
         estimateId: estId,
         flowType: 'STANDARD',
-        expectedProjectCount: targetCount,
+        expectedProjectCount: 1,
         expectedTaskCount: taskResult.expectedTaskCount,
         projectIds: salesOrderRollback.success ? [] : projectIds,
         taskIds: salesOrderRollback.success ? [] : taskResult.taskIds,
@@ -1201,10 +1177,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       salesOrderCount: 1,
       estimateLinesUpdated: salesOrderResult.estimateLinesUpdated,
       warnings: taskResult.warnings,
-      testMode: PROGRESS_TEST_MODE,
-      note: PROGRESS_TEST_MODE ?
-        'Progress test mode created ' + projectIds.length + ' Standard Projects. Turn off test mode after validation.' :
-        'Standard Project, Project Tasks, and Sales Order created.'
+      note: 'Standard Project, Project Tasks, and Sales Order created.'
     };
   }
 
@@ -2562,8 +2535,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET)
     );
 
-   // addProjectTaskAssignee(task, opts, taskData);
-
     try {
       log.audit({
         title: 'BC Project Task save attempt',
@@ -2572,11 +2543,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           projectId: opts.projectId,
           stagingId: opts.staging.id,
           title: taskData.title || '',
-          resource: getProjectTaskResource(opts, taskData) || '',
           bodyEstimatedWork: taskData.estimatedwork || '',
-          bodyPlannedWork: taskData.plannedwork || '',
-          assigneePlannedWork: getProjectTaskAssigneePlannedWork(taskData),
-          assigneeUnitCost: getProjectTaskAssigneeUnitCost(taskData)
+          bodyPlannedWork: taskData.plannedwork || ''
         })
       });
 
@@ -2602,7 +2570,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
           projectId: opts.projectId,
           stagingId: opts.staging.id,
           title: taskData.title || '',
-          resource: getProjectTaskResource(opts, taskData) || '',
           bodyFields: {
             status: taskData.status || '',
             estimatedwork: taskData.estimatedwork || '',
@@ -2614,94 +2581,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
             taskType: taskData.custevent_nx_task_type || '',
             taskAsset: taskData[TASK.ASSET] || opts.staging.siteAssetId || opts.estimate.getValue(EST.SITE_ASSET) || ''
           },
-          assigneeFields: {
-            plannedwork: getProjectTaskAssigneePlannedWork(taskData),
-            unitcost: getProjectTaskAssigneeUnitCost(taskData)
-          },
           error: getErrorDetails(saveError)
         })
       });
       throw saveError;
     }
-  }
-
-  function addProjectTaskAssignee(task, opts, taskData) {
-    var resourceId = getProjectTaskResource(opts, taskData);
-    var plannedWork = getProjectTaskAssigneePlannedWork(taskData);
-    var unitCost = getProjectTaskAssigneeUnitCost(taskData);
-
-    if (!resourceId) {
-      throw new Error(
-        'No Project Task resource found. Populate Estimate Project Manager or pass resource in the CPQ task JSON.'
-      );
-    }
-
-    log.audit({
-      title: 'BC Project Task assignee line attempt',
-      details: JSON.stringify({
-        estimateId: opts.estimateId,
-        projectId: opts.projectId,
-        stagingId: opts.staging.id,
-        title: taskData.title || '',
-        sublistId: TASK_ASSIGNEE.SUBLIST,
-        resourceField: TASK_ASSIGNEE.RESOURCE,
-        resource: resourceId,
-        plannedWorkField: TASK_ASSIGNEE.PLANNED_WORK,
-        plannedWork: plannedWork,
-        unitCostField: TASK_ASSIGNEE.UNIT_COST,
-        unitCost: unitCost
-      })
-    });
-
-    task.selectNewLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
-    task.setCurrentSublistValue({
-      sublistId: TASK_ASSIGNEE.SUBLIST,
-      fieldId: TASK_ASSIGNEE.RESOURCE,
-      value: resourceId
-    });
-
-    setCurrentTaskAssigneeField(
-      task,
-      TASK_ASSIGNEE.PLANNED_WORK,
-      plannedWork
-    );
-    setCurrentTaskAssigneeField(
-      task,
-      TASK_ASSIGNEE.UNIT_COST,
-      unitCost
-    );
-
-    task.commitLine({ sublistId: TASK_ASSIGNEE.SUBLIST });
-
-    log.audit({
-      title: 'BC Project Task assignee line committed',
-      details: JSON.stringify({
-        estimateId: opts.estimateId,
-        projectId: opts.projectId,
-        stagingId: opts.staging.id,
-        title: taskData.title || '',
-        resource: resourceId,
-        plannedWork: plannedWork,
-        unitCost: unitCost
-      })
-    });
-  }
-
-  function getProjectTaskResource(opts, taskData) {
-    return (
-      taskData.resource ||
-      taskData.assignee ||
-      taskData.projectresource ||
-      opts.estimate.getValue(EST.PROJECTMANAGER)
-    );
-  }
-
-  function getProjectTaskAssigneePlannedWork(taskData) {
-    return taskData.plannedwork || taskData.estimatedwork || taskData.duration || 0;
-  }
-
-  function getProjectTaskAssigneeUnitCost(taskData) {
-    return taskData.unitcost || taskData.cost || taskData.resourcecost || 0;
   }
 
   function getProjectTaskStartDate(opts, taskData) {
@@ -2774,16 +2658,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function isValidDate(date) {
     return Object.prototype.toString.call(date) === '[object Date]' && !isNaN(date.getTime());
-  }
-
-  function setCurrentTaskAssigneeField(task, fieldId, value) {
-    if (value === '' || value === null || value === undefined) return;
-
-    task.setCurrentSublistValue({
-      sublistId: TASK_ASSIGNEE.SUBLIST,
-      fieldId: fieldId,
-      value: value
-    });
   }
 
   function setTaskField(task, fieldId, value) {
@@ -3879,10 +3753,6 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function makeProjectName(prefix, tranId) {
     return prefix + ' - Estimate ' + (tranId || '');
-  }
-
-  function padNumber(value) {
-    return value < 10 ? '0' + value : String(value);
   }
 
   function setIfPresent(rec, fieldId, value) {
