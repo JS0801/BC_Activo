@@ -125,6 +125,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   var ESTIMATE_TYPE_STANDARD = '1';
   var ESTIMATE_TYPE_ROLLOUT = '2';
   var FIXED_FEE_PROJECT_TYPE = '18';
+  var STANDARD_ASYNC_RECORD_THRESHOLD = 20;
   var ROLLOUT_ASYNC_SITE_THRESHOLD = 10;
   var ROLLOUT_MR_SCRIPT_ID = 'customscript_bc_mr_rollout_generation';
   var ROLLOUT_MR_DEPLOY_NOW = 'customdeploy_bc_mr_rollout_gen_now';
@@ -1017,7 +1018,82 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
   function runStandardProjectCreation(est, estId) {
     markGenerationProcessing(estId);
+
+    var expectedRecordCount = getExpectedStandardRecordCount(est, estId);
+    if (expectedRecordCount > STANDARD_ASYNC_RECORD_THRESHOLD) {
+      return startStandardBackgroundGeneration(est, estId, expectedRecordCount);
+    }
+
     return runStandardGenerationFlow(est, estId, { initialRun: true });
+  }
+
+  function getExpectedStandardRecordCount(est, estId) {
+    return 1 + getExpectedProjectTaskCount(est, estId) + 1;
+  }
+
+  function startStandardBackgroundGeneration(est, estId, expectedRecordCount) {
+    var expectedTaskCount = getExpectedProjectTaskCount(est, estId);
+    var errors = [];
+    var projectId = findExistingStandardProject(estId);
+
+    if (!projectId) {
+      var projectResult = tryCreateProject({
+        estimate: est,
+        estimateId: estId,
+        parentId: est.getValue(EST.ENTITY),
+        siteAssetId: est.getValue(EST.SITE_ASSET),
+        namePrefix: 'Project',
+        attemptLabel: 'Standard Project',
+        errorType: 'Project',
+        errorKey: 'project:standard'
+      });
+
+      if (projectResult.projectId) projectId = projectResult.projectId;
+      if (projectResult.error) errors.push(projectResult.error);
+    }
+
+    if (errors.length || !projectId) {
+      return buildPartialFailureResult({
+        estimateId: estId,
+        flowType: 'STANDARD',
+        expectedProjectCount: 1,
+        expectedTaskCount: expectedTaskCount,
+        projectIds: projectId ? [projectId] : [],
+        projectErrors: errors,
+        note: 'Standard Project could not be created. Background Project Task and Sales Order processing did not start.'
+      });
+    }
+
+    setGenerationStatus(estId, GEN_STATUS.PENDING, {
+      projectId: projectId,
+      generated: false
+    });
+
+    var submitResult = submitRolloutMapReduce(estId, ROLLOUT_MR_DEPLOY_NOW);
+    if (submitResult.submitted) {
+      setGenerationStatus(estId, GEN_STATUS.PROCESSING, {
+        projectId: projectId,
+        generated: false
+      });
+    }
+
+    return {
+      success: true,
+      async: true,
+      flowType: 'STANDARD',
+      projectId: projectId,
+      projectIds: [projectId],
+      expectedProjectCount: 1,
+      projectCount: 1,
+      expectedTaskCount: expectedTaskCount,
+      expectedSalesOrderCount: 1,
+      expectedRecordCount: expectedRecordCount,
+      taskId: submitResult.taskId || '',
+      queued: !submitResult.submitted,
+      note: submitResult.submitted ?
+        'Standard Project is ready and background Project Task/Sales Order processing has started.' :
+        'Standard Project is ready. The on-demand Map/Reduce deployment was busy, so the scheduled deployment will pick this up.'
+    };
   }
 
   function runStandardGenerationFlow(est, estId, opts) {
@@ -1255,6 +1331,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
+      var retryRecordCount = getExpectedStandardRecordCount(est, estId);
+      if (retryRecordCount > STANDARD_ASYNC_RECORD_THRESHOLD) {
+        return startStandardBackgroundGeneration(est, estId, retryRecordCount);
+      }
       return runStandardGenerationFlow(est, estId, { retryKey: key });
     }
 
@@ -1295,6 +1375,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
+      var retryAllRecordCount = getExpectedStandardRecordCount(est, estId);
+      if (retryAllRecordCount > STANDARD_ASYNC_RECORD_THRESHOLD) {
+        return startStandardBackgroundGeneration(est, estId, retryAllRecordCount);
+      }
       return runStandardGenerationFlow(est, estId, { retryAll: true });
     }
 
@@ -1314,6 +1398,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
+      var retryRemainingRecordCount = getExpectedStandardRecordCount(est, estId);
+      if (retryRemainingRecordCount > STANDARD_ASYNC_RECORD_THRESHOLD) {
+        return startStandardBackgroundGeneration(est, estId, retryRemainingRecordCount);
+      }
       return runStandardGenerationFlow(est, estId, { retryRemaining: true });
     }
 
@@ -3337,10 +3425,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   }
 
   function buildGenerationResultPage(result) {
-    var success = result.success === true;
+    var async = result.async === true;
+    var success = result.success === true && !async;
     var partial = result.partial === true;
-    var statusText = success ? 'Complete' : partial ? 'Completed with Errors' : 'Failed';
-    var barColor = success ? '#059669' : partial ? '#d97706' : '#dc2626';
+    var statusText = async ? (result.queued ? 'Queued' : 'Processing') : success ? 'Complete' : partial ? 'Completed with Errors' : 'Failed';
+    var barColor = async ? '#2563eb' : success ? '#059669' : partial ? '#d97706' : '#dc2626';
     var expected = result.expectedProjectCount || result.projectCount || 0;
     var created = result.projectCount || 0;
     var percent = expected ? Math.min(100, Math.round((created / expected) * 100)) : (success ? 100 : 0);
