@@ -44,8 +44,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
     HOURS: 'custcol_bc_hours',
     NUM_RUNS: 'custcol_bc_no_of_runs',
     AVG_RUN_LENGTH: 'custcol_bc_avg_run_length',
-    UNIT_COST: 'custcol_bc_unit_cost',
-    EXTENDED_COST: 'custcol_bc_extended_cost',
+    COST_TYPE: 'costestimatetype',
+    UNIT_COST: 'costestimaterate',
+    EXTENDED_COST: 'costestimate',
     GROSS_MARGIN: 'custcol_bc_gross_margin'
   };
 
@@ -1438,6 +1439,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
             numRuns: componentLines[c].numRuns,
             avgRunLength: componentLines[c].avgRunLength,
             unitCost: componentLines[c].unitCost,
+            unitType: 'CUSTOM',
             extendedCost: componentLines[c].extendedCost,
             grossMargin: componentLines[c].grossMargin,
             forceAmount: true,
@@ -2173,6 +2175,7 @@ lines.push({
   numRuns: entry.data.numRuns,
   avgRunLength: entry.data.avgRunLength,
   unitCost: entry.data.cost,
+  unitType: 'CUSTOM',
   extendedCost: scaleCpqKitValue(entry.data.extMatCost, multiplier, true),
   grossMargin: entry.data.grossMgn,
   forceAmount: true
@@ -2238,6 +2241,7 @@ if (jsonText && typeof jsonText === 'object') {
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.HOURS, line, sourceLine.hours);
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.NUM_RUNS, line, normalizeBooleanLikeJsonValue(sourceLine.numRuns));
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.AVG_RUN_LENGTH, line, normalizeBooleanLikeJsonValue(sourceLine.avgRunLength));
+    setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.COST_TYPE, line, sourceLine.unitType);
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.UNIT_COST, line, sourceLine.unitCost);
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.EXTENDED_COST, line, sourceLine.extendedCost);
     setSublistIfPresent(salesOrder, 'item', SO_LINE_JSON_FIELD.GROSS_MARGIN, line, sourceLine.grossMargin);
