@@ -2059,7 +2059,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
       if (isKitItemType(itemType)) {
         var componentLines = cpqKitJson ?
-          buildCpqKitComponentLines(cpqKitJson, 'Estimate line ' + (i + 1)) :
+          buildCpqKitComponentLines(cpqKitJson, 'Estimate line ' + (i + 1), quantity) :
           allocateKitComponentLines(getKitComponents(itemId), quantity, sourceAmount, sourceRate);
 
         for (var c = 0; c < componentLines.length; c++) {
@@ -2126,7 +2126,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var location = salesOrder.getSublistValue({ sublistId: 'item', fieldId: 'location', line: i });
       var taxCode = salesOrder.getSublistValue({ sublistId: 'item', fieldId: EST_LINE.TAX_CODE, line: i });
       var componentLines = cpqKitJson ?
-        buildCpqKitComponentLines(cpqKitJson, 'Sales Order transformed line ' + (i + 1)) :
+        buildCpqKitComponentLines(cpqKitJson, 'Sales Order transformed line ' + (i + 1), quantity) :
         allocateKitComponentLines(getKitComponents(itemId), quantity, sourceAmount, sourceRate);
 
       if (!componentLines.length) continue;
@@ -2262,9 +2262,10 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     return lines;
   }
 
-  function buildCpqKitComponentLines(jsonText, contextLabel) {
+  function buildCpqKitComponentLines(jsonText, contextLabel, kitQuantity) {
     var entries = parseCpqKitJsonEntries(jsonText, contextLabel);
     if (!entries.length) throw new Error(contextLabel + ': CPQ kit JSON does not contain any component lines.');
+    var multiplier = toNumber(kitQuantity, 1) || 1;
 
     var lines = [];
     for (var i = 0; i < entries.length; i++) {
@@ -2272,20 +2273,23 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       var itemId = normalizeRecordId(entry.itemId);
       if (!itemId) throw new Error(contextLabel + ': CPQ kit JSON component is missing the item internal ID.');
 
-      lines.push({
-        itemId: itemId,
-        quantity: requireCpqNumber(entry.data.qty, contextLabel + ' component ' + itemId + ' qty'),
-        rate: requireCpqNumber(entry.data.matSellUnit, contextLabel + ' component ' + itemId + ' matSellUnit'),
-        amount: requireCpqNumber(entry.data.extMatSell, contextLabel + ' component ' + itemId + ' extMatSell'),
-        units: getCpqUnitValue(entry.data.uom, contextLabel + ' component ' + itemId),
-        hours: entry.data.hrs,
-        numRuns: entry.data.numRuns,
-        avgRunLength: entry.data.avgRunLength,
-        unitCost: entry.data.cost,
-        extendedCost: entry.data.extMatCost,
-        grossMargin: entry.data.grossMgn,
-        forceAmount: true
-      });
+var baseQty = requireCpqNumber(entry.data.qty, contextLabel + ' component ' + itemId + ' qty');
+var baseAmount = requireCpqNumber(entry.data.extMatSell, contextLabel + ' component ' + itemId + ' extMatSell');
+
+lines.push({
+  itemId: itemId,
+  quantity: baseQty * multiplier,
+  rate: requireCpqNumber(entry.data.matSellUnit, contextLabel + ' component ' + itemId + ' matSellUnit'),
+  amount: roundCurrency(baseAmount * multiplier),
+  units: getCpqUnitValue(entry.data.uom, contextLabel + ' component ' + itemId),
+  hours: scaleCpqKitValue(entry.data.hrs, multiplier, false),
+  numRuns: entry.data.numRuns,
+  avgRunLength: entry.data.avgRunLength,
+  unitCost: entry.data.cost,
+  extendedCost: scaleCpqKitValue(entry.data.extMatCost, multiplier, true),
+  grossMargin: entry.data.grossMgn,
+  forceAmount: true
+});
     }
 
     return lines;
