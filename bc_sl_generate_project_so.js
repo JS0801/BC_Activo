@@ -18,6 +18,7 @@
 define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record, search, log, format, taskModule) {
 
   // ---- Estimate field IDs --------------------------------------------------
+  var DISABLE_PROJECT_TASKS = true;
   var EST = {
     ENTITY: 'entity',
     TRANID: 'tranid',
@@ -239,7 +240,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
     var expectedTasks = getExpectedProjectTaskCount(est, estId);
     var expectedSalesOrders = getExpectedSalesOrderCount(est);
     var projects = getGeneratedProjects(estId);
-    var tasks = getGeneratedProjectTasks(estId);
+    var tasks = DISABLE_PROJECT_TASKS ? [] : getGeneratedProjectTasks(estId);
     var salesOrders = getGeneratedSalesOrders(estId);
     var errorDetails = readGenerationErrorDetails(est);
     var errorSummary = getProgressErrorSummary(errorDetails.errors);
@@ -592,7 +593,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       '<table><thead><tr><th>Internal ID</th><th>Name / ID</th><th>Parent</th><th>Site</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       '<h3>Generated Sales Orders</h3>' +
       '<table><thead><tr><th>Internal ID</th><th>Document #</th><th>Status</th></tr></thead><tbody>' + salesOrderRows + '</tbody></table>' +
-      '<h3>Project Task Hierarchy</h3>' +
+      (DISABLE_PROJECT_TASKS ? '' : '<h3>Project Task Hierarchy</h3>' + taskHierarchy) +
       taskHierarchy +
       '<p style="color:#6b7280;margin-top:10px;">Use Refresh Progress to load the latest values. Auto-refresh is paused so scrolling stays stable.</p>' +
       '</div></body></html>';
@@ -620,7 +621,8 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
             '</div>' +
             '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;color:#4b5563;font-size:11px;">' +
               '<span>Projects: ' + progress.created + '/' + progress.expected + '</span>' +
-              '<span>Tasks: ' + progress.createdTasks + '/' + progress.expectedTasks + '</span>' +
+              (DISABLE_PROJECT_TASKS ? '' :
+              '<span>Tasks: ' + progress.createdTasks + '/' + progress.expectedTasks + '</span>') +
               '<span>Sales Orders: ' + progress.createdSalesOrders + '/' + progress.expectedSalesOrders + '</span>' +
               (issueCount ? '<span>Issues: ' + issueCount + '</span>' : '') +
             '</div>' +
@@ -1178,7 +1180,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       salesOrderCount: 1,
       estimateLinesUpdated: salesOrderResult.estimateLinesUpdated,
       warnings: taskResult.warnings,
-      note: 'Standard Project, Project Tasks, and Sales Order created.'
+      note: DISABLE_PROJECT_TASKS
+          ? 'Standard Project and Sales Order created.'
+          : 'Standard Project, Project Tasks, and Sales Order created.'
     };
   }
 
@@ -1465,15 +1469,17 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         if (childResult.projectId) childProjectBySite[String(sites[i].id)] = childResult.projectId;
         if (childResult.error) {
           errors.push(childResult.error);
-          errors.push(makeBlockedError({
-            key: 'blocked:task:site:' + sites[i].id,
-            type: 'Blocked Project Task',
-            label: 'Project Tasks for Site ' + (sites[i].text || sites[i].id),
-            siteId: sites[i].id,
-            siteText: sites[i].text,
-            message: 'Blocked because the child Project was not created.',
-            blockedBy: childResult.error.key || 'Child Project'
-          }));
+          if (!DISABLE_PROJECT_TASKS) {
+  errors.push(makeBlockedError({
+    key: 'blocked:task:site:' + sites[i].id,
+    type: 'Blocked Project Task',
+    label: 'Project Tasks for Site ' + (sites[i].text || sites[i].id),
+    siteId: sites[i].id,
+    siteText: sites[i].text,
+    message: 'Blocked because the child Project was not created.',
+    blockedBy: childResult.error.key || 'Child Project'
+  }));
+}
           errors.push(makeBlockedError({
             key: 'blocked:so:site:' + sites[i].id,
             type: 'Blocked Sales Order',
@@ -1562,7 +1568,9 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       salesOrderCount: salesOrderResult.salesOrderIds.length,
       estimateLinesUpdated: salesOrderResult.estimateLinesUpdated,
       warnings: taskResult.warnings,
-      note: 'Rollout parent, child Projects, Project Tasks, and Sales Orders created.'
+      note: DISABLE_PROJECT_TASKS
+  ? 'Rollout parent, child Projects, and Sales Orders created.'
+  : 'Rollout parent, child Projects, Project Tasks, and Sales Orders created.'
     };
   }
 
@@ -3117,6 +3125,9 @@ function parseTaskJson(jsonText, stagingId) {
   }
 
   function getTaskStagingRecordsForEstimate(est, estId, opts) {
+    if (DISABLE_PROJECT_TASKS) {
+        return { records: [], warnings: [] };
+    }
     var recordsById = {};
     var warnings = [];
     var lines = getEstimateLineTaskContexts(est);
