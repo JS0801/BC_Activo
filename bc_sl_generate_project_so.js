@@ -569,6 +569,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Remaining Projects</div><div class="value">' + progress.remaining + '</div></div>' +
         '<div class="box"><div class="label">Project Source</div><div class="value">Estimate</div></div>' +
       '</div>' +
+      (DISABLE_PROJECT_TASKS ? '' :
       '<h3>Project Task Progress</h3>' +
       '<div class="bar"><div class="fill" style="background:' + getTaskBarColor(progress.expectedTasks, progress.createdTasks, progress.taskErrorCount, progress.blockedTaskCount) + ';width:' + progress.taskPercent + '%;"></div></div>' +
       '<div>Project Tasks created: <strong>' + progress.createdTasks + '</strong> of <strong>' + progress.expectedTasks + '</strong> (' + progress.taskPercent + '%)</div>' +
@@ -578,7 +579,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Remaining Tasks</div><div class="value">' + progress.remainingTasks + '</div></div>' +
         '<div class="box"><div class="label">Task Status</div><div class="value">' + escapeHtml(taskStatus) + '</div></div>' +
         '<div class="box"><div class="label">Task Source</div><div class="value">CPQ</div></div>' +
-      '</div>' +
+      '</div>' )+
       '<h3>Sales Order Progress</h3>' +
       '<div class="bar"><div class="fill" style="background:' + getSalesOrderBarColor(progress.expectedSalesOrders, progress.createdSalesOrders, progress.salesOrderErrorCount, progress.blockedSalesOrderCount) + ';width:' + progress.salesOrderPercent + '%;"></div></div>' +
       '<div>Sales Orders created: <strong>' + progress.createdSalesOrders + '</strong> of <strong>' + progress.expectedSalesOrders + '</strong> (' + progress.salesOrderPercent + '%)</div>' +
