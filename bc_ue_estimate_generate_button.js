@@ -127,10 +127,10 @@ define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWi
   function getProjectProgress(rec) {
     var estimateType = String(rec.getValue({ fieldId: FIELD.ESTIMATE_TYPE }) || '');
     var expectedProjects = getExpectedProjectCount(rec);
-    var expectedTasks = getExpectedProjectTaskCount(rec.id);
+    var expectedTasks = DISABLE_PROJECT_TASKS ? 0 : getExpectedProjectTaskCount(rec.id);
     var expectedSalesOrders = getExpectedSalesOrderCount(rec);
     var createdProjects = getCreatedProjectCount(rec.id);
-    var createdTasks = getCreatedProjectTaskCount(rec.id);
+    var createdTasks = DISABLE_PROJECT_TASKS ? 0 : getCreatedProjectTaskCount(rec.id);
     var createdSalesOrders = getCreatedSalesOrderCount(rec.id);
     var expected = expectedProjects + expectedTasks + expectedSalesOrders;
     var created = createdProjects + createdTasks + createdSalesOrders;
