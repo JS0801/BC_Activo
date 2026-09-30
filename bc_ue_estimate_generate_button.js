@@ -10,7 +10,7 @@
  * Owner: BlueCollar (Tom F.)
  */
 define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWidget, record) {
-
+  var DISABLE_PROJECT_TASKS = true;
   // ---- Config constants (confirm during dev) -------------------------------
   var FIELD = {
     APPROVAL_STATUS: 'custbody_bc_approval_stat_est', // exists on record (sample value = 2)
