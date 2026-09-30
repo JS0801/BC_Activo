@@ -10,7 +10,7 @@
  * Scheduled deployment: customdeploy_bc_mr_rollout_gen_sched
  */
 define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (record, search, log, format, runtime) {
-
+  var DISABLE_PROJECT_TASKS = true;
   var EST = {
     ENTITY: 'entity',
     TRANID: 'tranid',
@@ -722,15 +722,17 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
       if (childResult.projectId) childProjectId = childResult.projectId;
       if (childResult.error) {
         errors.push(childResult.error);
-        errors.push(makeBlockedError({
-          key: 'blocked:task:site:' + site.id,
-          type: 'Blocked Project Task',
-          label: 'Project Tasks for Site ' + (site.text || site.id),
-          siteId: site.id,
-          siteText: site.text,
-          message: 'Blocked because the child Project was not created.',
-          blockedBy: childResult.error.key
-        }));
+        if (!DISABLE_PROJECT_TASKS) {
+  errors.push(makeBlockedError({
+    key: 'blocked:task:site:' + site.id,
+    type: 'Blocked Project Task',
+    label: 'Project Tasks for Site ' + (site.text || site.id),
+    siteId: site.id,
+    siteText: site.text,
+    message: 'Blocked because the child Project was not created.',
+    blockedBy: childResult.error.key
+  }));
+}
         errors.push(makeBlockedError({
           key: 'blocked:so:site:' + site.id,
           type: 'Blocked Sales Order',
@@ -1471,7 +1473,11 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
   }
 
   function getTaskStagingRecordsForEstimate(est, estId, opts) {
-    var recordsById = {};
+  if (DISABLE_PROJECT_TASKS) {
+    return { records: [], warnings: [] };
+  }
+
+  var recordsById = {};
     var warnings = [];
     var lines = getEstimateLineTaskContexts(est);
     var ids = [];
