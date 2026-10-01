@@ -50,7 +50,7 @@ define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWi
     if (ctx.type !== ctx.UserEventType.VIEW) return;
 
     var rec = ctx.newRecord;
-    var approved = String(rec.getValue({ fieldId: FIELD.APPROVAL_STATUS })) === APPROVED_STATUS_VALUE;
+    var approved = String(rec.getValue({ fieldId: FIELD.APPROVAL_STATUS })) === APPROVED_STATUS_VALUE || String(rec.getValue({ fieldId: FIELD.APPROVAL_STATUS })) === '';
     var alreadyGenerated = rec.getValue({ fieldId: FIELD.PROJECT_GENERATED }) === true;
     var progress = getProjectProgress(rec);
     var form = ctx.form;
