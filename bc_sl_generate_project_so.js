@@ -462,7 +462,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       'function bcRunRetry(action,key,button,label){label=label||"Retry";if(button){button.setAttribute("data-original-text",button.textContent);button.disabled=true;button.textContent="Retrying...";bcMarkRetryRow(button);}bcSetRetryButtons(true);bcSetRetryStatus(bcEscapeHtml(label)+" is running. Please wait.","working");var xhr=new XMLHttpRequest();xhr.open("GET",bcRetryUrl(action,key),true);xhr.onreadystatechange=function(){if(xhr.readyState!==4)return;var result={};try{result=JSON.parse(xhr.responseText||"{}");}catch(parseError){}if(xhr.status>=200&&xhr.status<300&&result.success===true){bcSetRetryStatus(bcEscapeHtml(label)+" finished successfully. Refreshing progress...","success");}else if(xhr.status>=200&&xhr.status<300&&result.partial===true){bcSetRetryStatus(bcEscapeHtml(label)+" finished with remaining issues. Refreshing progress...","warning");}else{var msg=(result&&(result.error||result.message||result.note))||xhr.statusText||"Retry failed.";bcSetRetryStatus(bcEscapeHtml(label)+" finished with an error: "+bcEscapeHtml(msg)+" Refreshing progress...","error");}bcNotifyParentInlineRefresh();bcRefreshProgressSoon(1200);};xhr.onerror=function(){bcSetRetryStatus(bcEscapeHtml(label)+" could not reach the Suitelet. Please try again.","error");bcSetRetryButtons(false);bcRestoreRetryButton(button,"Retry");};xhr.send();}' +
       'function bcRetryOne(key,button){if(!key)return;bcRunRetry("retry",key,button,"Retry");}' +
       'function bcRetryAll(button){bcRunRetry("retry_all","",button,"Retry Failed / Blocked");}' +
-      'function bcRetryRemaining(button){bcRunRetry("retry_remaining","",button,"Retry Remaining");}' +
+      'function bcRetryRemaining(button){bcRunRetry("retry_remaining","",button,"Retry Incomplete");}' +
       '</script>';
   }
 
@@ -506,12 +506,16 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<td>' + (err.retryable === false ? '<span class="muted">Blocked</span>' : '<button type="button" class="mini" data-retry-button="T" onclick="bcRetryOne(\'' + escapeJs(err.key || '') + '\', this)">Retry</button>') + '</td>' +
       '</tr>';
     }).join('') : '<tr><td colspan="5">No saved errors found.</td></tr>';
-    var retryAllButton = progress.errors.length ?
-      '<button type="button" class="primary" data-retry-button="T" onclick="bcRetryAll(this)">Retry Failed / Blocked</button>' : '';
-    var retryRemainingButton = shouldShowRetryRemaining(progress) ?
-      '<button type="button" class="primary secondary-action" data-retry-button="T" onclick="bcRetryRemaining(this)">Retry Remaining</button>' : '';
-    var retryStatus = progress.errors.length || shouldShowRetryRemaining(progress) ?
-      '<div id="bc_retry_status" class="retry-status idle"></div>' : '';
+var showRetryButton =
+  progress.errors.length > 0 || shouldShowRetryRemaining(progress);
+
+var retryButton = showRetryButton
+  ? '<button type="button" class="primary" data-retry-button="T" onclick="bcRetryRemaining(this)">Retry Incomplete</button>'
+  : '';
+
+var retryStatus = showRetryButton
+  ? '<div id="bc_retry_status" class="retry-status idle"></div>'
+  : '';
 
     return '<!doctype html>' +
       '<html><head><title>Project Progress</title>' +
@@ -556,7 +560,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
         '<div class="box"><div class="label">Remaining</div><div class="value">' + progress.remainingTotal + '</div></div>' +
         '<div class="box"><div class="label">Status</div><div class="value">' + escapeHtml(progress.statusText) + '</div></div>' +
       '</div>' +
-      '<div class="actions">' + retryRemainingButton + retryAllButton + '</div>' +
+      '<div class="actions">' + retryButton + '</div>' +
       retryStatus +
       '<h3>Saved Errors / Blockers</h3>' +
       '<table><thead><tr><th>Type</th><th>Attempt</th><th>Site / Line</th><th>Message</th><th>Action</th></tr></thead><tbody>' + errorRows + '</tbody></table>' +
