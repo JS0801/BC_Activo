@@ -152,7 +152,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
         id: estId,
         isDynamic: false
       });
-      var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+      var estimateType = getGenerationEstimateType(est);
 
       if (estimateType === ESTIMATE_TYPE_STANDARD) {
         return buildStandardTaskInputsForEstimate(est, estId);
