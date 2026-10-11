@@ -84,7 +84,7 @@ define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWi
       noOfSites = bodyAsset ? 1 : 0;
     }
 
-    if (String(estimateType) === '2') {
+    if (String(estimateType) === '2' || noOfSites == 0) {
       const assetCountCol = search.createColumn({
         name: 'custcol_nx_asset',
         summary: search.Summary.COUNT,
@@ -105,6 +105,8 @@ define(['N/search', 'N/ui/serverWidget', 'N/record'], function (search, serverWi
         noOfSites = Number(result.getValue(assetCountCol)) || 0;
         return false;
       });
+
+      
     }
 
     const currentValue = Number(newRec.getValue({ fieldId: 'custbody_no_of_sites' })) || 0;
