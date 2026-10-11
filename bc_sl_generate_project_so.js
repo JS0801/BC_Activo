@@ -3377,9 +3377,10 @@ function parseTaskJson(jsonText, stagingId) {
         '<div class="box"><div class="label">Failed</div><div class="value">' + (result.failedProjectCount || 0) + '</div></div>' +
       '</div>' +
       '<div class="summary">' +
-        '<div class="box"><div class="label">Expected Tasks</div><div class="value">' + (result.expectedTaskCount || 0) + '</div></div>' +
-        '<div class="box"><div class="label">Created Tasks</div><div class="value">' + (result.taskCount || 0) + '</div></div>' +
-        '<div class="box"><div class="label">Failed Tasks</div><div class="value">' + (result.failedTaskCount || 0) + '</div></div>' +
+        (DISABLE_PROJECT_TASKS ? '' :
+  '<div class="box"><div class="label">Expected Tasks</div><div class="value">' + (result.expectedTaskCount || 0) + '</div></div>' +
+  '<div class="box"><div class="label">Created Tasks</div><div class="value">' + (result.taskCount || 0) + '</div></div>' +
+  '<div class="box"><div class="label">Failed Tasks</div><div class="value">' + (result.failedTaskCount || 0) + '</div></div>') +
         '<div class="box"><div class="label">Warnings</div><div class="value">' + ((result.warnings || []).length) + '</div></div>' +
       '</div>' +
       '<div class="summary">' +
