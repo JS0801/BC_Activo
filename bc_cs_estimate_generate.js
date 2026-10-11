@@ -129,6 +129,46 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
     showProjectProgressPopup(suiteletUrl);
   }
 
+  function bcRefreshInlineProjectProgress(button) {
+    var rec = currentRecord.get();
+    var estId = rec.id;
+    var progressEl = document.getElementById('bc_inline_project_progress');
+
+    if (!progressEl) return;
+
+    var originalText = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Refreshing';
+    }
+
+    var suiteletUrl = url.resolveScript({
+      scriptId: SUITELET_SCRIPT_ID,
+      deploymentId: SUITELET_DEPLOYMENT_ID,
+      params: {
+        action: 'inline_progress',
+        estid: estId
+      }
+    });
+
+    sendAsyncGet(withCacheBuster(suiteletUrl), function (body) {
+      var latestProgressEl = document.getElementById('bc_inline_project_progress');
+      if (!latestProgressEl) return;
+
+      if (body && String(body).replace(/\s+/g, '')) {
+        latestProgressEl.outerHTML = body;
+      } else {
+        latestProgressEl.style.display = 'none';
+      }
+    }, function (message) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText || 'Refresh';
+      }
+      window.alert(message);
+    });
+  }
+
   function showGenerationRunning(estimateType) {
     var isRollout = estimateType === ESTIMATE_TYPE_ROLLOUT;
 
@@ -535,6 +575,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
       if (typeof window !== 'undefined') {
         window.bcGenerateProjectAndSO = bcGenerateProjectAndSO;
         window.bcViewProjectProgress = bcViewProjectProgress;
+        window.bcRefreshInlineProjectProgress = bcRefreshInlineProjectProgress;
       }
     } catch (ignore) {
       // Ignore non-browser execution contexts.
@@ -546,6 +587,7 @@ define(['N/url', 'N/https', 'N/currentRecord'], function (url, https, currentRec
   return {
     pageInit: pageInit,
     bcGenerateProjectAndSO: bcGenerateProjectAndSO,
-    bcViewProjectProgress: bcViewProjectProgress
+    bcViewProjectProgress: bcViewProjectProgress,
+    bcRefreshInlineProjectProgress: bcRefreshInlineProjectProgress
   };
 });
