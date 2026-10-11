@@ -177,7 +177,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       } else {
         validateEstimate(est, estId);
 
-        var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+        var estimateType = getGenerationEstimateType(est);
 
         if (estimateType === ESTIMATE_TYPE_STANDARD) {
           out = runStandardProjectCreation(est, estId);
@@ -235,7 +235,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   }
 
   function getProjectProgress(est, estId) {
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
     var expected = getExpectedProjectCount(est);
     var expectedTasks = getExpectedProjectTaskCount(est, estId);
     var expectedSalesOrders = getExpectedSalesOrderCount(est);
@@ -330,7 +330,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   }
 
   function getExpectedProjectCount(est) {
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       return 1;
@@ -345,7 +345,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
   }
 
   function getExpectedSalesOrderCount(est) {
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) return 1;
     if (estimateType === ESTIMATE_TYPE_ROLLOUT) return getUniqueLineSites(est).length;
@@ -981,7 +981,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       throw new Error('Project records already exist for this estimate. Delete or review them before re-running.');
     }
 
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
     var missingFields = [];
 
     if (isMissing(est.getValue(EST.PROJECT_START))) missingFields.push('Project Start Date');
@@ -1308,7 +1308,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
 
     setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
 
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       var retryRecordCount = getExpectedStandardRecordCount(est, estId);
       if (retryRecordCount > STANDARD_ASYNC_RECORD_THRESHOLD) {
@@ -1350,7 +1350,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       allowCompleted: true
     });
 
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
 
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
@@ -1374,7 +1374,7 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/task'], function (record
       allowCompleted: true
     });
 
-    var estimateType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+    var estimateType = getGenerationEstimateType(est);
     if (estimateType === ESTIMATE_TYPE_STANDARD) {
       setGenerationStatus(estId, GEN_STATUS.PROCESSING, { generated: false });
       var retryRemainingRecordCount = getExpectedStandardRecordCount(est, estId);
@@ -3424,6 +3424,14 @@ function parseTaskJson(jsonText, stagingId) {
 
     return sites;
   }
+  function getGenerationEstimateType(est) {
+  var rawType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+  if (rawType === ESTIMATE_TYPE_STANDARD &&
+      getUniqueLineSites(est).length > 1) {
+    return ESTIMATE_TYPE_ROLLOUT;
+  }
+  return rawType;
+}
 
   function hasExistingGeneratedProjects(estId) {
     return search.create({
