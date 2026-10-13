@@ -91,7 +91,7 @@ define(['N/render', 'N/record', 'N/runtime', 'N/config', 'N/file', 'N/url', 'N/x
                 let pdf;
                 try { pdf = render.xmlToPdf({ xmlString: renderedXml }); }
                 catch (renderError) {
-                    const refs = Array.from(renderedXml.matchAll(/(?:src|src-bold|src-italic|src-bolditalic)="([^"]*)"/g)).map(m => m[1].split('?')[0]);
+                    const refs = Array.from(renderedXml.matchAll(/(?:src|src-bold|src-italic|src-bolditalic)="([^"]*)"/g)).map(m => /^data:/.test(m[1]) ? '[embedded image]' : m[1].split('?')[0]);
                     throw Error(String(renderError.message) + ' Resources: ' + refs.join(' | '));
                 }
                 pdf.name = 'Estimate_' + String(payload.body.tranid || 'Unsaved').replace(/[^a-z0-9_-]/gi, '_') + '_Preview.pdf';
