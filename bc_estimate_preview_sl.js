@@ -82,7 +82,7 @@ define(['N/render', 'N/record', 'N/runtime', 'N/config', 'N/file', 'N/url', 'N/x
                 catch (_) { /* Mobile is optional; no extra employee permission is required. */ }
                 const renderer = render.create();
                 renderer.setTemplateByScriptId({ scriptId: lib.TEMPLATE });
-                renderer.templateContent = lib.adaptTemplate(renderer.templateContent);
+                renderer.templateContent = lib.adaptTemplate(lib.TEMPLATE_SOURCE);
                 const sources = { previewRecord: data, previewCompany: companyData, previewSubsidiary: subsidiaryData,
                     previewUser: { email: lib.escape(user.email), mobilephone: lib.escape(mobile) } };
                 Object.keys(sources).forEach(alias => renderer.addCustomDataSource({ format: render.DataSource.OBJECT, alias, data: sources[alias] }));
