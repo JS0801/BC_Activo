@@ -20,6 +20,7 @@ define(['N/render', 'N/record', 'N/runtime', 'N/config', 'N/file', 'N/url', 'N/x
             const f = file.load({ id: Number(id) }); // Uses the current role, never an elevated role.
             if (pdfOnly && f.fileType !== file.Type.PDF) throw Error('Supporting file ' + id + ' is not a PDF.');
             const path = f.url;
+            if (/^\/\//.test(path)) return 'https:' + path;
             return /^https:\/\//i.test(path) ? path : 'https://' + url.resolveDomain({ hostType: url.HostType.APPLICATION }) + path;
         }
         function rich(input, name) {
@@ -72,7 +73,7 @@ define(['N/render', 'N/record', 'N/runtime', 'N/config', 'N/file', 'N/url', 'N/x
                 });
                 const company = config.load({ type: config.Type.COMPANY_INFORMATION });
                 const logoId = read(company, 'formlogo');
-                const companyData = { email: lib.escape(read(company, 'email')), logoUrl: logoId ? lib.escape(mediaURL(logoId, false)) : '' };
+                const companyData = { email: lib.escape(read(company, 'email')), logoUrl: logoId ? mediaURL(logoId, false) : '' };
                 const sub = record.load({ type: record.Type.SUBSIDIARY, id: Number(payload.body.subsidiary), isDynamic: false });
                 let address = read(sub, 'mainaddress_text');
                 if (!address) address = sub.getSubrecord({ fieldId: 'mainaddress' }).getValue({ fieldId: 'addrtext' });
