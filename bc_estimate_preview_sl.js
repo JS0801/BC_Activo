@@ -87,13 +87,10 @@ define(['N/render', 'N/record', 'N/runtime', 'N/config', 'N/file', 'N/url', 'N/x
                 const sources = { previewRecord: data, previewCompany: companyData, previewSubsidiary: subsidiaryData,
                     previewUser: { email: lib.escape(user.email), mobilephone: lib.escape(mobile) } };
                 Object.keys(sources).forEach(alias => renderer.addCustomDataSource({ format: render.DataSource.OBJECT, alias, data: sources[alias] }));
-                const renderedXml = renderer.renderAsString();
-                let pdf;
-                try { pdf = render.xmlToPdf({ xmlString: renderedXml }); }
-                catch (renderError) {
-                    const refs = Array.from(renderedXml.matchAll(/(?:src|src-bold|src-italic|src-bolditalic)="([^"]*)"/g)).map(m => /^data:/.test(m[1]) ? '[embedded image]' : m[1].split('?')[0]);
-                    throw Error(String(renderError.message) + ' Resources: ' + refs.join(' | '));
-                }
+                // NetSuite OBJECT data may render an empty optional PDF as a blank src.
+                // BFO resolves that to the account root; omit empty resource nodes.
+                const renderedXml = renderer.renderAsString().replace(/<pdf\s+src="\s*"\s*\/>/g, '');
+                const pdf = render.xmlToPdf({ xmlString: renderedXml });
                 pdf.name = 'Estimate_' + String(payload.body.tranid || 'Unsaved').replace(/[^a-z0-9_-]/gi, '_') + '_Preview.pdf';
                 ctx.response.writeFile({ file: pdf, isInline: true });
             } catch (e) {
