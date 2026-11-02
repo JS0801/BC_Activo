@@ -11,6 +11,9 @@
  */
 define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (record, search, log, format, runtime) {
   var DISABLE_PROJECT_TASKS = true;
+
+  var CPQ_ITEM_UNIT_TYPE_CACHE = {};
+var CPQ_UNIT_TYPE_CACHE = {};
   var EST = {
     ENTITY: 'entity',
     TRANID: 'tranid',
@@ -2184,7 +2187,7 @@ lines.push({
   quantity: baseQty * multiplier,
   rate: requireCpqNumber(entry.data.matSellUnit, contextLabel + ' component ' + itemId + ' matSellUnit'),
   amount: roundCurrency(baseAmount * multiplier),
-  units: getCpqUnitValue(entry.data.uom, contextLabel + ' component ' + itemId),
+  units: getCpqUnitValue(entry.data.uom, contextLabel + ' component ' + itemId, itemId),
   hours: scaleCpqKitValue(entry.data.hrs, multiplier, false),
   numRuns: entry.data.numRuns,
   avgRunLength: entry.data.avgRunLength,
@@ -2206,7 +2209,7 @@ lines.push({
     }
 
     var data = entries[0].data;
-    line.units = getCpqUnitValue(data.uom, contextLabel);
+    line.units = getCpqUnitValue(data.uom, contextLabel, line.itemId);
     line.hours = data.hrs;
     line.numRuns = data.numRuns;
     line.avgRunLength = data.avgRunLength;
@@ -2307,15 +2310,54 @@ if (jsonText && typeof jsonText === 'object') {
     return num;
   }
 
-  function getCpqUnitValue(value, contextLabel) {
-    if (isBlankValue(value) || value === false) return '';
-    if (/^\d+$/.test(String(value))) return String(value);
+function getCpqUnitValue(value, contextLabel, itemId) {
+  if (isBlankValue(value) || value === false) return '';
+  if (!itemId) return '';
 
-    var key = String(value).toLowerCase().trim();
-    var unitId = CPQ_UOM_BY_NAME[key];
-    if (!unitId) throw new Error(contextLabel + ': CPQ UOM "' + value + '" is not mapped to a NetSuite unit.');
-    return unitId;
+  var itemKey = String(itemId);
+  if (!Object.prototype.hasOwnProperty.call(CPQ_ITEM_UNIT_TYPE_CACHE, itemKey)) {
+    var fields = search.lookupFields({
+      type: search.Type.ITEM,
+      id: itemId,
+      columns: ['unitstype']
+    });
+    CPQ_ITEM_UNIT_TYPE_CACHE[itemKey] = normalizeRecordId(fields.unitstype);
   }
+
+  var typeId = CPQ_ITEM_UNIT_TYPE_CACHE[itemKey];
+  if (!typeId) return '';
+
+  if (!CPQ_UNIT_TYPE_CACHE[typeId]) {
+    var unitsRecord = record.load({
+      type: 'unitstype',
+      id: typeId,
+      isDynamic: false
+    });
+    var units = [];
+    var count = unitsRecord.getLineCount({ sublistId: 'uom' });
+    for (var i = 0; i < count; i++) {
+      var readUnit = function (fieldId) {
+        return String(unitsRecord.getSublistValue({
+          sublistId: 'uom', fieldId: fieldId, line: i
+        }) || '').trim().toLowerCase();
+      };
+      units.push({
+        id: readUnit('internalid'),
+        names: ['unitname', 'pluralname', 'abbreviation', 'pluralabbreviation']
+          .map(readUnit)
+      });
+    }
+    CPQ_UNIT_TYPE_CACHE[typeId] = units;
+  }
+
+  var requested = String(value).trim().toLowerCase();
+  var matches = CPQ_UNIT_TYPE_CACHE[typeId].filter(function (unit) {
+    return /^\d+$/.test(requested)
+      ? unit.id === requested
+      : unit.names.indexOf(requested) !== -1;
+  });
+  return matches.length === 1 ? matches[0].id : '';
+}
 
   function normalizeBooleanLikeJsonValue(value) {
     return value === false ? '' : value;
