@@ -2100,6 +2100,14 @@ define(['N/record', 'N/search', 'N/log', 'N/format', 'N/runtime'], function (rec
 
     return sites;
   }
+  function getGenerationEstimateType(est) {
+  var rawType = String(est.getValue(EST.ESTIMATE_TYPE) || '');
+  if (rawType === ESTIMATE_TYPE_STANDARD &&
+      getUniqueLineSites(est).length > 1) {
+    return ESTIMATE_TYPE_ROLLOUT;
+  }
+  return rawType;
+}
 
   function getKitComponents(kitItemId) {
     var kit = record.load({ type: record.Type.KIT_ITEM || 'kititem', id: kitItemId, isDynamic: false });
