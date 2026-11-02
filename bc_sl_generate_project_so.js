@@ -3866,6 +3866,17 @@ function parseTaskJson(jsonText, stagingId) {
     }
   }
 
+
+  function scaleCpqKitValue(value, multiplier, roundValue) {
+  if (isBlankValue(value) || value === false) return value;
+
+  var numericValue = toNumber(value, null);
+  if (numericValue === null || isNaN(numericValue)) return value;
+
+  var scaledValue = numericValue * multiplier;
+  return roundValue ? roundCurrency(scaledValue) : scaledValue;
+}
+
   function toNumber(value, defaultValue) {
     var n = Number(String(value === null || value === undefined ? '' : value).replace(/,/g, ''));
     return isNaN(n) ? defaultValue : n;
