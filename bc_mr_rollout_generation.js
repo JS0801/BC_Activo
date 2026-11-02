@@ -2216,6 +2216,41 @@ lines.push({
     return line;
   }
 
+  function normalizeCpqNumericFields(data, contextLabel) {
+  var normalized = Object.assign({}, data);
+  var numericKeys = [
+    'qty', 'sell', 'hrs', 'numRuns', 'avgRunLength',
+    'cost', 'extMatCost', 'matSellUnit', 'extMatSell', 'grossMgn'
+  ];
+
+  numericKeys.forEach(function (key) {
+    var value = normalized[key];
+
+    if (
+      value === undefined ||
+      value === null ||
+      value === false ||
+      (typeof value === 'string' && value.trim() === '')
+    ) {
+      normalized[key] = 0;
+      return;
+    }
+
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw new Error(contextLabel + ' ' + key + ' is not a valid number.');
+    }
+
+    var number = Number(String(value).replace(/,/g, '').trim());
+    if (!isFinite(number)) {
+      throw new Error(contextLabel + ' ' + key + ' is not a valid number.');
+    }
+
+    normalized[key] = number;
+  });
+
+  return normalized;
+}
+
   function parseCpqKitJsonEntries(jsonText, contextLabel) {
 var parsed;
 
@@ -2240,9 +2275,12 @@ if (jsonText && typeof jsonText === 'object') {
         throw new Error(contextLabel + ': CPQ kit JSON component ' + itemId + ' must be an object.');
       }
       entries.push({
-        itemId: itemId,
-        data: parsed[itemId]
-      });
+  itemId: itemId,
+  data: normalizeCpqNumericFields(
+    parsed[itemId],
+    contextLabel + ' component ' + itemId
+  )
+});
     }
 
     return entries;
